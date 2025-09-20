@@ -1,4 +1,3 @@
-**Job Title: Python Full-Stack Developer**
 import streamlit as st
 import os
 import sqlite3
@@ -379,25 +378,3 @@ with dashboard_tab:
 
 st.markdown("---")
 st.markdown("Developed by **Siddhant Pal** for the Code4EdTech Challenge by Innomatics Research Labs.")
-**Company:** Innovatech Pune
-**Location:** Pune, India
-
-**About Us:**
-Innovatech is a dynamic startup creating cutting-edge web solutions. We value an Agile approach and are looking for a skilled developer to contribute to our core products.
-
-**Role Summary:**
-We are looking for a Full-Stack Developer with 2+ years of experience to join our team. You will be responsible for developing both client-side and server-side components of our applications, ensuring high performance and responsiveness.
-
-**Key Responsibilities:**
-- Develop and maintain scalable client-side applications using **React** and **Node.js**.
-- Build and consume robust REST APIs using **Python** and the **Flask** framework.
-- Manage and query application data effectively using **MongoDB** and **MySQL**.
-- Utilize **Git** for version control in a collaborative, Agile team.
-- Write and maintain unit tests for backend services to ensure code quality.
-
-**Required Skills and Experience:**
-- Proven experience with **Python** (Flask) and **JavaScript** (React, Node.js).
-- Strong knowledge of database systems, specifically **MongoDB** and **MySQL**, including writing SQL queries.
-- Proficient with **Git** for version control.
-- Experience working in an **Agile** development environment.
-- A background in assisting with UI component development and writing unit tests is highly desirable.
