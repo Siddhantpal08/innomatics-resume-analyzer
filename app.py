@@ -153,7 +153,6 @@ def extract_skills_from_text(text):
     skill_pattern = r"\b(" + "|".join(re.escape(skill) for skill in SKILL_KEYWORDS) + r")\b"
     matches = re.findall(skill_pattern, text, re.IGNORECASE)
     return sorted(list(set(match.title() for match in matches)))
-
 def get_llm_analysis(jd_text, resume_text):
     """Enhanced LLM analysis with weighted skill scoring and partial credit."""
     if not GOOGLE_API_KEY:
@@ -163,11 +162,11 @@ def get_llm_analysis(jd_text, resume_text):
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
 
-    # --- Extract skills from JD ---
     jd_skills = extract_skills_from_text(jd_text)
     jd_skills_list = ", ".join(jd_skills) if jd_skills else "None"
 
-    prompt_template = f"""
+    # --- Prompt with variables ---
+    prompt_template = """
 You are a Senior Technical Recruiter AI. Your goal is to **accurately score a resume** against a JD based on **demonstrated experience**, not just keywords.
 
 **Job Description Skills (pre-extracted):**
@@ -176,10 +175,10 @@ You are a Senior Technical Recruiter AI. Your goal is to **accurately score a re
 **Candidate Resume:**
 {resume_text}
 
-**Instructions for Scoring:**
+Instructions:
 1. Assign points to each JD skill based on evidence in the resume:
-   - Full points if clearly demonstrated in work experience or projects.
-   - Partial points (50%) if skill is indirectly shown or mentioned without projects.
+   - Full points if clearly demonstrated in work experience/projects.
+   - Partial points (50%) if skill is indirectly mentioned.
    - Zero if missing.
 
 2. Weights (total 100):
@@ -193,16 +192,27 @@ You are a Senior Technical Recruiter AI. Your goal is to **accurately score a re
    - Medium Suitability: 40-69
    - Low Suitability: <40
 
-4. List **3-5 missing critical skills**.
+4. List 3-5 missing critical skills.
 
-5. Provide **professional, constructive feedback** for the candidate.
+5. Provide professional, constructive feedback.
 
-**Output JSON format** (must follow exactly):
-{parser.get_format_instructions()}
+Output JSON format:
+{format_instructions}
 """
-    chain = PromptTemplate(template=prompt_template, input_variables=[], partial_variables={}) | model | parser
 
-    return chain.invoke({})
+    prompt = PromptTemplate(
+        template=prompt_template,
+        input_variables=["jd_skills_list", "resume_text"],
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+
+    chain = prompt | model | parser
+
+    return chain.invoke({
+        "jd_skills_list": jd_skills_list,
+        "resume_text": resume_text
+    })
+
 
 # --- Main App UI & Logic ---
 
