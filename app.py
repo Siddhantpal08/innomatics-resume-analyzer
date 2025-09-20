@@ -155,7 +155,7 @@ def extract_skills_from_text(text):
     return sorted(list(set(match.title() for match in matches)))
 
 def get_llm_analysis(jd_text, resume_text):
-    """Orchestrates the LLM call for a comprehensive analysis."""
+    """Orchestrates the LLM call for a comprehensive and fair analysis."""
     if not GOOGLE_API_KEY:
         st.error("Google API Key is not configured. Please set it in your secrets.")
         return None
@@ -163,33 +163,35 @@ def get_llm_analysis(jd_text, resume_text):
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
     
     prompt_template = """
-    You are a world-class Senior Technical Recruiter with 20 years of experience, known for your meticulous, evidence-based analysis. Your task is to provide a rigorous evaluation of a resume against a job description. Your reputation depends on your precision and honesty.
+    You are a highly experienced Senior Technical Recruiter. Your primary goal is to be **fair and accurate**. You must evaluate a candidate's resume against a job description by focusing on **demonstrated experience**, not just keyword matching.
 
     **CONTEXT:**
-    1.  **Job Description (JD):**
-        ```
-        {jd}
-        ```
-    2.  **Candidate's Resume Content:**
-        ```
-        {resume}
-        ```
+    - **Job Description (JD):**
+      ```
+      {jd}
+      ```
+    - **Candidate's Resume Content:**
+      ```
+      {resume}
+      ```
 
-    **YOUR TASK (Follow these steps precisely):**
+    **EVALUATION CRITERIA (Follow these steps precisely):**
 
-    1.  **Identify Core Requirements:** Scrutinize the JD and list the 5-7 most critical, non-negotiable hard skills, technologies, and experience qualifications (e.g., "5+ years of experience in Python", "experience with AWS S3 and EC2", "CI/CD pipeline management"). These are your primary evaluation criteria.
+    1.  **Identify Core Requirements:** Analyze the JD to identify the 5-7 most critical skills and qualifications.
     
-    2.  **Evidence-Based Skill Gap Analysis:** For each core requirement identified in Step 1, you must perform a forensic scan of the **entire Resume Content**. Find direct evidence. If a skill is mentioned, note it. If it is described with project experience, note that as a stronger match. If it is completely absent, you MUST list it as a missing skill. Do not make assumptions or infer skills that aren't explicitly stated.
+    2.  **Evidence-Based Analysis:** For each core requirement, find **direct evidence** in the resume's "Work Experience" or "Projects" sections. A skill simply listed in a "Skills" section is a weak match. A skill demonstrated in a project or professional role is a **strong match**.
     
-    3.  **Calculate Relevance Score (0-100):** Based *only* on your evidence-based analysis, provide a score.
-        - **High Suitability (75-100):** The candidate's resume provides strong, explicit evidence for almost all ( > 80%) of the core requirements. The experience described is directly relevant.
-        - **Medium Suitability (45-74):** The resume shows evidence for some core requirements (40-70%), but is missing others, or the experience lacks depth and specific examples. The candidate is plausible but not a perfect match.
-        - **Low Suitability (<45):** The resume is missing a majority of the core requirements. The candidate is a clear mismatch for this specific role.
+    3.  **FAIR SCORING (0-100):**
+        - **High Suitability (80-100):** The candidate provides strong, demonstrated evidence for nearly all core requirements. Their experience is directly and obviously relevant.
+        - **Medium Suitability (50-79):** The candidate demonstrates some core skills but is missing others, or their experience is related but not a direct match. The candidate is plausible.
+        - **Low Suitability (<50):** The resume is missing the majority of core requirements or lacks any demonstrated experience for the listed skills.
 
-    4.  **Write Professional Feedback:** Create a professional, constructive feedback paragraph for the candidate. Begin by acknowledging a specific, tangible strength from their resume. Then, clearly and directly state the 2-3 most critical missing skills you identified, explaining why they are important for this type of role. This feedback should be actionable and helpful.
+    4.  **Actionable Feedback:**
+        - Identify the 3-5 most critical missing skills or qualifications.
+        - Write a professional, constructive feedback paragraph for the candidate, highlighting a strength first, then clearly stating the key areas for improvement for this specific type of role.
 
     **OUTPUT FORMAT:**
-    You MUST format your entire response as a single, valid JSON object that adheres to the following structure. Do not add any text, explanations, or markdown before or after the JSON object.
+    You MUST format your entire response as a single, valid JSON object. Do not add any text or markdown before or after the JSON object.
     {format_instructions}
     """
     
@@ -217,7 +219,7 @@ if 'jd_text_key' not in st.session_state:
 st.markdown("""
 <style>
     /* Invert logo in dark mode */
-    [data-testid="stAppViewContainer"] [data-testid="stImage"] img {
+    body[data-theme="dark"] [data-testid="stImage"] > img {
         filter: invert(1);
     }
 </style>
@@ -352,18 +354,25 @@ with dashboard_tab:
         if not final_df.empty:
             for index, row in final_df.iterrows():
                 with st.container(border=True):
-                    col1, col2, col3 = st.columns([5, 1, 1])
-                    with col1:
-                        st.markdown(f"**{row['resume_filename']}**")
-                        st.markdown(f"Score: `{row['score']}%` | Verdict: **{row['verdict']}**")
-                    with col2:
-                        if st.button("Details", key=f"view_{row['id']}", use_container_width=True):
-                            show_report_modal(row['id'])
-                    with col3:
-                        if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
-                            delete_analysis_from_db(row['id'])
-                            st.success(f"Deleted record for {row['resume_filename']}.")
-                            st.rerun()
+                    # Truncate missing skills for display in the expander title
+                    missing_skills_summary = row['missing_skills']
+                    if len(missing_skills_summary) > 40:
+                        missing_skills_summary = missing_skills_summary[:40] + "..."
+
+                    expander_title = f"**{row['resume_filename']}** | Score: `{row['score']}%` | Verdict: **{row['verdict']}** | Gaps: *{missing_skills_summary}*"
+                    
+                    with st.expander(expander_title):
+                        button_col1, button_col2 = st.columns([1, 5])
+                        
+                        with button_col1:
+                            if st.button("View Details", key=f"view_{row['id']}", use_container_width=True):
+                                show_report_modal(row['id'])
+
+                        with button_col2:
+                            if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
+                                delete_analysis_from_db(row['id'])
+                                st.success(f"Deleted record for {row['resume_filename']}.")
+                                st.rerun()
         else:
             st.info("No records match the current filter criteria.")
 
