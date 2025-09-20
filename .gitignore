@@ -1,0 +1,10 @@
+# Environment variables
+.env
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# Database file
+analysis_results.db

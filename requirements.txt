@@ -1,0 +1,16 @@
+streamlit
+langchain
+langchain-google-genai
+python-dotenv
+pypdf
+PyPDF2
+python-docx
+spacy
+https://www.google.com/search?q=https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz%23egg%3Den_core_web_sm
+langchain-community
+chromadb
+sentence-transformers
+torch
+pydantic
+pandas
+langchain-huggingface
