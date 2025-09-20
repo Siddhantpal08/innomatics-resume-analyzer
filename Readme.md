@@ -5,7 +5,7 @@ This project is a comprehensive, AI-powered system designed to automate and scal
 Developed by: Siddhant Pal
 
 🚀 Live Application
-[Link to Deployed Application on Streamlit Cloud] <!-- THIS WILL BE FILLED IN AFTER DEPLOYMENT -->
+https://innomatics-resume-analyzer.streamlit.app
 
 🎯 The Problem
 The Innomatics placement team receives thousands of applications for dozens of job roles weekly across multiple locations. The manual process of reviewing each resume against a job description (JD) is a significant bottleneck, leading to:
