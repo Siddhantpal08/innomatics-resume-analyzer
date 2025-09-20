@@ -1,11 +1,9 @@
-streamlit
-pandas
-langchain
-langchain-google-genai
-langchain-community
-langchain-huggingface
-pydantic>=2.0
-PyPDF2
-python-docx
-python-dotenv
-lxml
+import streamlit as st
+import os
+import sqlite3
+import pandas as pd
+import re
+from datetime import datetime
+from PyPDF2 import PdfReader
+from docx import Document
+from typing import List, Optional
