@@ -167,38 +167,42 @@ def get_llm_analysis(jd_text, resume_text):
 
     # --- Prompt with variables ---
     prompt_template = """
-You are a Senior Technical Recruiter AI. Your goal is to **accurately score a resume** against a JD based on **demonstrated experience**, not just keywords.
+    You are a Senior Technical Recruiter AI. Score the candidate fairly.
+    
+    Job Description Skills (pre-extracted):
+    {jd_skills_list}
+    
+    Candidate Resume:
+    {resume_text}
+    
+    Instructions:
+    1. Evaluate each skill individually:
+       - Full (100%) if skill is clearly demonstrated in work experience/projects.
+       - Partial (50%) if skill is only listed in skills section.
+       - Missing (0%) if skill not present.
+    
+    2. Weights for Axion Ray JD:
+       - Domain/Manufacturing/Data skills: 25 pts
+       - Technical Python/Excel/R skills: 20 pts
+       - Experience & Data Cleaning: 20 pts
+       - Collaboration/Soft skills: 15 pts
+       - Bonus (AI/NLP/LLMs): 10 pts
+    
+    3. Compute final relevance score = sum(weighted points)
+    
+    4. Provide verdict:
+       - High: 70-100%
+       - Medium: 40-69%
+       - Low: <40%
+    
+    5. List 3-5 missing critical skills
+    
+    6. Provide actionable, professional feedback
+    
+    Output JSON:
+    {format_instructions}
+    """
 
-**Job Description Skills (pre-extracted):**
-{jd_skills_list}
-
-**Candidate Resume:**
-{resume_text}
-
-Instructions:
-1. Assign points to each JD skill based on evidence in the resume:
-   - Full points if clearly demonstrated in work experience/projects.
-   - Partial points (50%) if skill is indirectly mentioned.
-   - Zero if missing.
-
-2. Weights (total 100):
-   - Core technical skills: 15 points each
-   - Domain/manufacturing experience: 20 points
-   - Collaboration/soft skills: 10 points
-   - Bonus (extra relevant skills): 5 points
-
-3. Compute total score and verdict:
-   - High Suitability: 70-100
-   - Medium Suitability: 40-69
-   - Low Suitability: <40
-
-4. List 3-5 missing critical skills.
-
-5. Provide professional, constructive feedback.
-
-Output JSON format:
-{format_instructions}
-"""
 
     prompt = PromptTemplate(
         template=prompt_template,
