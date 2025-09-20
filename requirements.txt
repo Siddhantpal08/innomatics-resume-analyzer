@@ -12,5 +12,4 @@ chromadb
 sentence-transformers
 torch
 pydantic
-pandas
 langchain-huggingface
