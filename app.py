@@ -217,7 +217,7 @@ if 'jd_text_key' not in st.session_state:
 st.markdown("""
 <style>
     /* Invert logo in dark mode */
-    body[data-theme="dark"] .stImage > img {
+    [data-testid="stAppViewContainer"] [data-testid="stImage"] img {
         filter: invert(1);
     }
 </style>
