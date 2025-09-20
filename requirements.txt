@@ -4,10 +4,13 @@ langchain
 langchain-google-genai
 langchain-community
 langchain-huggingface
-pydantic
+pydantic==1.10.13
 PyPDF2
 python-docx
+spacy==3.7.2
+thinc==8.2.2
+blis==0.7.11
 chromadb
 sentence-transformers
-torch
 python-dotenv
+lxml
