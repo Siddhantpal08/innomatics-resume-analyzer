@@ -155,57 +155,54 @@ def extract_skills_from_text(text):
     return sorted(list(set(match.title() for match in matches)))
 
 def get_llm_analysis(jd_text, resume_text):
-    """Orchestrates the LLM call for a comprehensive and fair analysis."""
+    """Enhanced LLM analysis with weighted skill scoring and partial credit."""
     if not GOOGLE_API_KEY:
         st.error("Google API Key is not configured. Please set it in your secrets.")
         return None
+
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
-    
-    prompt_template = """
-    You are a highly experienced Senior Technical Recruiter. Your primary goal is to be **fair and accurate**. You must evaluate a candidate's resume against a job description by focusing on **demonstrated experience**, not just keyword matching.
 
-    **CONTEXT:**
-    - **Job Description (JD):**
-      ```
-      {jd}
-      ```
-    - **Candidate's Resume Content:**
-      ```
-      {resume}
-      ```
+    # --- Extract skills from JD ---
+    jd_skills = extract_skills_from_text(jd_text)
+    jd_skills_list = ", ".join(jd_skills) if jd_skills else "None"
 
-    **EVALUATION CRITERIA (Follow these steps precisely):**
+    prompt_template = f"""
+You are a Senior Technical Recruiter AI. Your goal is to **accurately score a resume** against a JD based on **demonstrated experience**, not just keywords.
 
-    1.  **Identify Core Requirements:** Analyze the JD to identify the 5-7 most critical skills and qualifications.
-    
-    2.  **Evidence-Based Analysis:** For each core requirement, find **direct evidence** in the resume's "Work Experience" or "Projects" sections. A skill simply listed in a "Skills" section is a weak match. A skill demonstrated in a project or professional role is a **strong match**.
-    
-    3.  **FAIR SCORING (0-100):**
-        - **High Suitability (70-100):** The candidate provides strong, demonstrated evidence for nearly all core requirements. Their experience is directly and obviously relevant.
-        - **Medium Suitability (40-69):** The candidate demonstrates some core skills but is missing others, or their experience is related but not a direct match. The candidate is plausible.
-        - **Low Suitability (<40):** The resume is missing the majority of core requirements or lacks any demonstrated experience for the listed skills.
+**Job Description Skills (pre-extracted):**
+{jd_skills_list}
 
-    4.  **Actionable Feedback:**
-        - Identify the 3-5 most critical missing skills or qualifications.
-        - Write a professional, constructive feedback paragraph for the candidate, highlighting a strength first, then clearly stating the key areas for improvement for this specific type of role.
+**Candidate Resume:**
+{resume_text}
 
-    **OUTPUT FORMAT:**
-    You MUST format your entire response as a single, valid JSON object. Do not add any text or markdown before or after the JSON object.
-    {format_instructions}
-    """
-    
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["jd", "resume"],
-        partial_variables={"format_instructions": parser.get_format_instructions()}
-    )
-    
-    chain = prompt | model | parser
-    return chain.invoke({
-        "jd": jd_text,
-        "resume": resume_text,
-    })
+**Instructions for Scoring:**
+1. Assign points to each JD skill based on evidence in the resume:
+   - Full points if clearly demonstrated in work experience or projects.
+   - Partial points (50%) if skill is indirectly shown or mentioned without projects.
+   - Zero if missing.
+
+2. Weights (total 100):
+   - Core technical skills: 15 points each
+   - Domain/manufacturing experience: 20 points
+   - Collaboration/soft skills: 10 points
+   - Bonus (extra relevant skills): 5 points
+
+3. Compute total score and verdict:
+   - High Suitability: 70-100
+   - Medium Suitability: 40-69
+   - Low Suitability: <40
+
+4. List **3-5 missing critical skills**.
+
+5. Provide **professional, constructive feedback** for the candidate.
+
+**Output JSON format** (must follow exactly):
+{parser.get_format_instructions()}
+"""
+    chain = PromptTemplate(template=prompt_template, input_variables=[], partial_variables={}) | model | parser
+
+    return chain.invoke({})
 
 # --- Main App UI & Logic ---
 
