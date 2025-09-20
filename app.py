@@ -60,11 +60,11 @@ def init_database():
     """Initializes the database table."""
     conn = get_db_connection()
     c = conn.cursor()
+    # Create table if it does not exist
     c.execute('''
         CREATE TABLE IF NOT EXISTS results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME NOT NULL,
-            resume_filename TEXT NOT NULL,
             jd_summary TEXT NOT NULL,
             score INTEGER NOT NULL,
             verdict TEXT NOT NULL,
@@ -73,6 +73,12 @@ def init_database():
             full_jd TEXT
         )
     ''')
+    # Add resume_filename column if missing
+    try:
+        c.execute("ALTER TABLE results ADD COLUMN resume_filename TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
     conn.commit()
 
 init_database()
