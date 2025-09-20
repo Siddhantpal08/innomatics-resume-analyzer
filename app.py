@@ -174,6 +174,7 @@ def get_llm_analysis(jd_text, resume_text):
     - Skills Simply Listed in a List: {resume_listed}
 
     **EVALUATION TASKS:**
+
     1.  **SCORE (0-100):** Calculate a score based on how well the candidate's skills match the critical skills.
         - Start with a base score of 0.
         - For each skill in 'Critical Skills' that is also in 'Demonstrated Skills', add 15 points. This is a strong match.
@@ -207,6 +208,8 @@ def get_llm_analysis(jd_text, resume_text):
     return final_report, jd_skills.job_title
 
 # --- Main App UI & Logic ---
+
+# --- CSS Styling ---
 st.markdown("""
 <style>
     /* Invert logo in dark mode */
@@ -217,34 +220,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Header ---
-title_col, button_col = st.columns([4, 1])
-with title_col:
-    st.image(LOGO_URL, width=250)
-    st.title("Placement Team Dashboard")
-
-with button_col:
-    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True)
-    if st.button("🧹 Clear Session", key="clear_button", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+st.image(LOGO_URL, width=250)
+st.title("Automated Resume Relevance Checker")
+st.markdown("---")
 
 # --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
 with analysis_tab:
-    st.header("Run a New Analysis")
+    st.header("1. Input Job and Resume Data")
     with st.container(border=True):
-        col1, col2 = st.columns([2, 1])
+        col1, col2 = st.columns(2)
         with col1:
-            st.subheader("📋 Job Description")
-            jd_text = st.text_area("Paste the Job Description text here:", height=300, key="jd_text_key", label_visibility="collapsed", placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL. Experience with AWS is a plus...'")
+            jd_text = st.text_area("Paste the full Job Description here:", height=300, key="jd_text_key", placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL...'")
         with col2:
-            st.subheader("📄 Candidate Resumes")
-            uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key="file_uploader_key", label_visibility="collapsed")
+            uploaded_files = st.file_uploader("Upload one or more resumes (PDF, DOCX):", type=["pdf", "docx"], accept_multiple_files=True, key="file_uploader_key")
+
     st.write("") 
 
-    if st.button("🚀 Run Full Analysis", type="primary", key="analysis_button", use_container_width=True):
+    if st.button("🚀 Analyze Resumes", type="primary", key="analysis_button", use_container_width=True):
         if not jd_text.strip() or not uploaded_files:
             st.error("Please provide both a Job Description and at least one resume.")
         else:
@@ -252,7 +246,7 @@ with analysis_tab:
             jd_summary = " ".join(jd_text.split()[:15]).strip() + "..."
             for file in uploaded_files:
                 if check_if_exists(file.name, jd_summary):
-                    st.warning(f"Skipping '{file.name}': This resume has already been analyzed for this job.")
+                    st.warning(f"Skipping '{file.name}': This resume has already been analyzed for this job description.")
                 else:
                     files_to_process.append(file)
             
