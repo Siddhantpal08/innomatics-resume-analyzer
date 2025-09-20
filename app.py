@@ -1,296 +1,371 @@
 import streamlit as st
 import os
-from dotenv import load_dotenv
-from PyPDF2 import PdfReader
-import docx
-from typing import List
 import sqlite3
 import pandas as pd
+import re
 from datetime import datetime
+from PyPDF2 import PdfReader
+from docx import Document
+from typing import List
 
-# LangChain Imports
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+# --- Core AI Libraries & Pydantic ---
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import PydanticOutputParser
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+from dotenv import load_dotenv
 
-import concurrent.futures
-from numpy import dot
-from numpy.linalg import norm
+# --- PAGE CONFIG (MUST BE THE FIRST STREAMLIT COMMAND) ---
+st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide", initial_sidebar_state="collapsed")
 
-# Load environment variables
+# --- Load Environment Variables ---
 load_dotenv()
-os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# --------------------------
-# DATABASE SETUP
-# --------------------------
+# --- Global Configurations ---
 DB_FILE = "analysis_results.db"
+LOGO_URL = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
+SKILL_KEYWORDS = [
+    'Python', 'Java', 'C++', 'JavaScript', 'Go', 'Ruby', 'PHP', 'Django', 'Flask', 'Spring Boot', 'Node.js', 
+    'React', 'Angular', 'Vue.js', 'SQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Cassandra', 
+    'AWS', 'Azure', 'Google Cloud', 'GCP', 'Docker', 'Kubernetes', 'Terraform', 'Ansible', 'Git', 
+    'JIRA', 'Confluence', 'Agile', 'Scrum', 'CI/CD', 'Jenkins', 'DevOps', 'Machine Learning', 
+    'Deep Learning', 'TensorFlow', 'PyTorch', 'scikit-learn', 'Data Analysis', 'Pandas', 'NumPy', 
+    'Matplotlib', 'Seaborn', 'Tableau', 'Power BI', 'Natural Language Processing', 'NLP', 
+    'API', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Big Data', 'Hadoop', 'Spark'
+]
+
+# --- Pydantic Model for Structured LLM Output ---
+class FinalAnalysis(BaseModel):
+    relevance_score: int = Field(description="The final relevance score from 0 to 100.")
+    verdict: str = Field(description="A verdict of 'High Suitability', 'Medium Suitability', or 'Low Suitability'.")
+    missing_skills: List[str] = Field(description="A list of the 3-5 most critical skills or qualifications explicitly mentioned in the job description but completely missing from the resume.")
+    candidate_feedback: str = Field(description="A concise, professional, and actionable feedback paragraph for the candidate.")
+
+    @validator('relevance_score')
+    def score_must_be_in_range(cls, v):
+        if not 0 <= v <= 100:
+            raise ValueError('Relevance score must be between 0 and 100')
+        return v
+
+# --- Database Management ---
+@st.cache_resource
+def get_db_connection():
+    """Creates a cached, singleton connection to the SQLite database."""
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.row_factory = sqlite3.Row 
+    return conn
 
 def init_database():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
+    """Initializes the database table."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
         CREATE TABLE IF NOT EXISTS results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME NOT NULL,
-            candidate_name TEXT NOT NULL,
+            resume_filename TEXT NOT NULL,
             jd_summary TEXT NOT NULL,
             score INTEGER NOT NULL,
             verdict TEXT NOT NULL,
             missing_skills TEXT,
-            feedback TEXT
+            feedback TEXT,
+            full_jd TEXT
         )
-    """)
+    ''')
     conn.commit()
-    conn.close()
 
-def add_analysis_to_db(candidate_name, jd_summary, report):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO results (timestamp, candidate_name, jd_summary, score, verdict, missing_skills, feedback)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
+init_database()
+
+def add_analysis_to_db(filename, jd_text, report: FinalAnalysis):
+    """Adds a new analysis report to the database."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    jd_summary = " ".join(jd_text.split()[:15]).strip() + "..."
+    c.execute('''
+        INSERT INTO results (timestamp, resume_filename, jd_summary, score, verdict, missing_skills, feedback, full_jd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
         datetime.now(),
-        candidate_name,
+        filename,
         jd_summary,
         report.relevance_score,
         report.verdict,
-        ", ".join(report.missing_elements),
-        report.improvement_feedback
+        ", ".join(report.missing_skills) if report.missing_skills else "N/A",
+        report.candidate_feedback,
+        jd_text
     ))
     conn.commit()
-    conn.close()
 
 def load_data_for_dashboard():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM results ORDER BY timestamp DESC", conn)
-    conn.close()
-    if not df.empty:
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
-    return df
+    """Loads all analysis results into a Pandas DataFrame."""
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query("SELECT id, timestamp, resume_filename, jd_summary, score, verdict, missing_skills FROM results ORDER BY id DESC", conn)
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+        return df
+    except Exception as e:
+        st.error(f"Error loading dashboard data: {e}")
+        return pd.DataFrame()
+
+def get_single_record(record_id):
+    """Retrieves a single, complete record from the database by its ID."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM results WHERE id = ?", (record_id,))
+    return c.fetchone()
 
 def delete_analysis_from_db(record_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM results WHERE id = ?", (record_id,))
+    """Deletes a specific analysis record by its ID."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM results WHERE id = ?", (record_id,))
     conn.commit()
-    conn.close()
-
-# --------------------------
-# SKILL EXTRACTION (no spaCy)
-# --------------------------
-SKILL_KEYWORDS = [
-    'Python', 'Java', 'C++', 'JavaScript', 'Go', 'Ruby', 'PHP', 'Django', 'Flask', 'Spring', 
-    'Node.js', 'React', 'Angular', 'Vue.js', 'SQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 
-    'Cassandra', 'AWS', 'Azure', 'Google Cloud', 'GCP', 'Docker', 'Kubernetes', 'Terraform', 
-    'Git', 'JIRA', 'Confluence', 'Agile', 'Scrum', 'CI/CD', 'DevOps', 'Machine Learning', 
-    'Deep Learning', 'TensorFlow', 'PyTorch', 'scikit-learn', 'Data Analysis', 'Pandas', 'NumPy', 
-    'Matplotlib', 'Tableau', 'Power BI', 'Natural Language Processing', 'NLP', 'API', 'REST', 
-    'GraphQL', 'Microservices', 'System Design'
-]
-
-def extract_skills(text: str):
-    text_lower = text.lower()
-    found = []
-    for skill in SKILL_KEYWORDS:
-        if skill.lower() in text_lower:
-            found.append(skill)
-    return found
-
-# --------------------------
-# FILE UPLOAD PARSING
-# --------------------------
-def get_uploaded_file_text(uploaded_file):
+    
+# --- UI Helper Functions ---
+def style_verdict(verdict):
+    if verdict == 'High Suitability': return f'**<span style="color: #28a745;">{verdict}</span>**'
+    elif verdict == 'Medium Suitability': return f'**<span style="color: #ffc107;">{verdict}</span>**'
+    else: return f'**<span style="color: #dc3545;">{verdict}</span>**'
+    
+# --- Core Logic Functions ---
+def get_file_text(uploaded_file):
+    """Extracts text from uploaded PDF or DOCX file."""
     text = ""
     try:
-        if uploaded_file.type == "application/pdf":
+        if uploaded_file.name.endswith(".pdf"):
             pdf_reader = PdfReader(uploaded_file)
             for page in pdf_reader.pages:
                 text += page.extract_text() or ""
-        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            doc = docx.Document(uploaded_file)
+        elif uploaded_file.name.endswith(".docx"):
+            doc = Document(uploaded_file)
             for para in doc.paragraphs:
                 text += para.text + "\n"
     except Exception as e:
         st.error(f"Error reading {uploaded_file.name}: {e}")
-        return None
+        return ""
     return text
 
-# --------------------------
-# EMBEDDING & SEMANTIC SEARCH
-# --------------------------
-@st.cache_resource
-def load_embedding_model():
-    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
 @st.cache_data
-def embed_resume_chunks(resume_chunks, embedding_model):
-    embeddings = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(embedding_model.embed_query, chunk) for chunk in resume_chunks]
-        for future in concurrent.futures.as_completed(futures):
-            embeddings.append(future.result())
-    return embeddings
+def extract_skills_from_text(text):
+    """Extracts skills using a robust regular expression."""
+    skill_pattern = r"\b(" + "|".join(re.escape(skill) for skill in SKILL_KEYWORDS) + r")\b"
+    matches = re.findall(skill_pattern, text, re.IGNORECASE)
+    return sorted(list(set(match.title() for match in matches)))
 
-def cosine_similarity(a,b): 
-    return dot(a,b)/(norm(a)*norm(b)+1e-8)
-
-def perform_semantic_search(embedding_model, resume_text, jd_text):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    resume_chunks = text_splitter.split_text(resume_text)
-    if not resume_chunks: return []
-
-    embeddings = embed_resume_chunks(tuple(resume_chunks), embedding_model)
-    jd_embedding = embedding_model.embed_query(jd_text)
-    
-    similarities = [(cosine_similarity(emb, jd_embedding), chunk) for emb, chunk in zip(embeddings, resume_chunks)]
-    similarities.sort(reverse=True)
-    return [chunk for score, chunk in similarities[:3]]
-
-# --------------------------
-# LLM FINAL ANALYSIS
-# --------------------------
-class FinalAnalysis(BaseModel):
-    relevance_score: int = Field(description="The final relevance score from 0 to 100.")
-    verdict: str = Field(description="A verdict of 'High Suitability', 'Medium Suitability', or 'Low Suitability'.")
-    missing_elements: List[str] = Field(description="A list of key skills missing from the resume.")
-    improvement_feedback: str = Field(description="Actionable feedback for improvement.")
-
-def get_llm_synthesis(jd_text, matched_skills, missing_skills, relevant_chunks):
-    model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2)
+def get_llm_analysis(jd_text, resume_text):
+    """Orchestrates the LLM call for a comprehensive analysis."""
+    if not GOOGLE_API_KEY:
+        st.error("Google API Key is not configured. Please set it in your secrets.")
+        return None
+    model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
-    prompt_template_str = """
-    You are an expert HR Analyst. Analyze the candidate based on the data below:
+    
+    prompt_template = """
+    You are a world-class Senior Technical Recruiter with 20 years of experience, known for your meticulous, evidence-based analysis. Your task is to provide a rigorous evaluation of a resume against a job description. Your reputation depends on your precision and honesty.
 
-    **Job Description:** {jd}
+    **CONTEXT:**
+    1.  **Job Description (JD):**
+        ```
+        {jd}
+        ```
+    2.  **Candidate's Resume Content:**
+        ```
+        {resume}
+        ```
 
-    **Pre-Analysis Data:**
-    - Matched Keywords: {matched_skills}
-    - Missing Keywords: {missing_skills}
-    - Resume Chunks:
-    ---
-    {relevant_chunks}
-    ---
+    **YOUR TASK (Follow these steps precisely):**
 
-    Provide a relevance score (0-100), verdict (High/Medium/Low), missing skills, and actionable feedback.
+    1.  **Identify Core Requirements:** Scrutinize the JD and list the 5-7 most critical, non-negotiable hard skills, technologies, and experience qualifications (e.g., "5+ years of experience in Python", "experience with AWS S3 and EC2", "CI/CD pipeline management"). These are your primary evaluation criteria.
+    
+    2.  **Evidence-Based Skill Gap Analysis:** For each core requirement identified in Step 1, you must perform a forensic scan of the **entire Resume Content**. Find direct evidence. If a skill is mentioned, note it. If it is described with project experience, note that as a stronger match. If it is completely absent, you MUST list it as a missing skill. Do not make assumptions or infer skills that aren't explicitly stated.
+    
+    3.  **Calculate Relevance Score (0-100):** Based *only* on your evidence-based analysis, provide a score.
+        - **High Suitability (75-100):** The candidate's resume provides strong, explicit evidence for almost all ( > 80%) of the core requirements. The experience described is directly relevant.
+        - **Medium Suitability (45-74):** The resume shows evidence for some core requirements (40-70%), but is missing others, or the experience lacks depth and specific examples. The candidate is plausible but not a perfect match.
+        - **Low Suitability (<45):** The resume is missing a majority of the core requirements. The candidate is a clear mismatch for this specific role.
 
-    Output in JSON format: {format_instructions}
+    4.  **Write Professional Feedback:** Create a professional, constructive feedback paragraph for the candidate. Begin by acknowledging a specific, tangible strength from their resume. Then, clearly and directly state the 2-3 most critical missing skills you identified, explaining why they are important for this type of role. This feedback should be actionable and helpful.
+
+    **OUTPUT FORMAT:**
+    You MUST format your entire response as a single, valid JSON object that adheres to the following structure. Do not add any text, explanations, or markdown before or after the JSON object.
+    {format_instructions}
     """
+    
     prompt = PromptTemplate(
-        template=prompt_template_str, 
-        input_variables=["jd","matched_skills","missing_skills","relevant_chunks"],
+        template=prompt_template,
+        input_variables=["jd", "resume"],
         partial_variables={"format_instructions": parser.get_format_instructions()}
     )
+    
     chain = prompt | model | parser
     return chain.invoke({
         "jd": jd_text,
-        "matched_skills": ", ".join(matched_skills),
-        "missing_skills": ", ".join(missing_skills),
-        "relevant_chunks": "\n---\n".join(relevant_chunks)
+        "resume": resume_text,
     })
 
-# --------------------------
-# STREAMLIT APP
-# --------------------------
-st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide")
+# --- Main App UI & Logic ---
 
-init_database()
-embedding_model = load_embedding_model()
-
-# Sidebar reset
+# Session state initialization
 if 'file_uploader_key' not in st.session_state:
-    st.session_state.file_uploader_key = 'initial'
+    st.session_state.file_uploader_key = str(datetime.now().timestamp())
+if 'jd_text_key' not in st.session_state:
+    st.session_state.jd_text_key = ''
 
-title_col, button_col = st.columns([4,1])
+# CSS to make the logo compatible with Streamlit's native dark mode
+st.markdown("""
+<style>
+    /* Invert logo in dark mode */
+    body[data-theme="dark"] .stImage > img {
+        filter: invert(1);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# --- Header ---
+title_col, button_col = st.columns([4, 1])
 with title_col:
-    st.image("https://placehold.co/200x70/ffffff/000000?text=Innomatics", width=200)
+    st.image(LOGO_URL, width=250)
     st.title("Placement Team Dashboard")
+
 with button_col:
     st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True)
-    if st.button("🧹 Clear & Reset Session"):
+    if st.button("🧹 Clear Session", key="clear_button", use_container_width=True):
+        st.session_state.jd_text_key = ""
         st.session_state.file_uploader_key = str(datetime.now().timestamp())
         st.rerun()
 
+# --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
-# -------------------------- Analysis Tab --------------------------
 with analysis_tab:
     st.header("Run a New Analysis")
-    col1, col2 = st.columns([2,1])
-    with col1:
-        st.subheader("📋 Job Description")
-        jd_text = st.text_area("Paste JD text:", height=300)
-    with col2:
-        st.subheader("📄 Candidate Resumes")
-        uploaded_files = st.file_uploader("Upload resumes", type=["pdf","docx"], accept_multiple_files=True, key=st.session_state.file_uploader_key)
+    with st.container(border=True):
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.subheader("📋 Job Description")
+            jd_text = st.text_area(
+                "Paste the Job Description text here:", 
+                height=300, 
+                key="jd_text_key", 
+                label_visibility="collapsed",
+                placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL. Experience with AWS is a plus...'"
+            )
+        with col2:
+            st.subheader("📄 Candidate Resumes")
+            uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key=st.session_state.file_uploader_key, label_visibility="collapsed")
+    st.write("") 
 
-    if st.button("🚀 Run Full Analysis"):
-        if not jd_text or not uploaded_files:
-            st.error("Please provide both JD and at least one resume.")
+    if st.button("🚀 Run Full Analysis", type="primary", key="analysis_button", use_container_width=True):
+        if not jd_text.strip() or not uploaded_files:
+            st.error("Please provide both a Job Description and at least one resume.")
         else:
-            required_skills = set(extract_skills(jd_text))
-            st.info(f"**Required Skills:** {', '.join(required_skills) if required_skills else 'None'}")
-            progress_bar = st.progress(0)
+            required_skills = set(extract_skills_from_text(jd_text))
+            st.info(f"**Required Skills Detected in JD:** {', '.join(required_skills) if required_skills else 'None'}")
+            
+            progress_bar = st.progress(0, text="Initializing...")
             
             for i, resume_file in enumerate(uploaded_files):
-                st.markdown(f"### Candidate: {resume_file.name}")
-                resume_text = get_uploaded_file_text(resume_file)
-                if not resume_text: continue
+                progress_bar.progress((i + 1) / len(uploaded_files), text=f"Analyzing {resume_file.name}...")
                 
-                resume_skills = set(extract_skills(resume_text))
-                matched, missing = required_skills.intersection(resume_skills), required_skills.difference(resume_skills)
-                chunks = perform_semantic_search(embedding_model, resume_text, jd_text)
-                final_report = get_llm_synthesis(jd_text, matched, missing, chunks)
+                with st.container(border=True):
+                    st.markdown(f"### Candidate: {resume_file.name}")
+                    resume_text = get_file_text(resume_file)
+                    if not resume_text: continue
 
-                jd_summary = " ".join(jd_text.split()[:10]).strip() + "..."
-                add_analysis_to_db(resume_file.name, jd_summary, final_report)
+                    with st.spinner("AI is analyzing and generating the report..."):
+                        try:
+                            final_report = get_llm_analysis(jd_text, resume_text)
+                            if final_report:
+                                add_analysis_to_db(resume_file.name, jd_text, final_report)
+                                
+                                res_col1, res_col2 = st.columns([1, 3])
+                                with res_col1:
+                                    st.markdown(style_verdict(final_report.verdict), unsafe_allow_html=True)
+                                    st.metric("Score", f"{final_report.relevance_score}%")
+                                with res_col2:
+                                    st.warning("**Identified Gaps:**")
+                                    st.markdown("\n".join([f"- {item}" for item in final_report.missing_skills]) or "- None")
+                                    st.success("**Personalized Feedback:**")
+                                    st.write(final_report.candidate_feedback)
+                        except Exception as e:
+                            st.error(f"An error occurred while analyzing {resume_file.name}: {e}")
+                            st.exception(e)
 
-                st.markdown(f"**Verdict:** {final_report.verdict} | Score: {final_report.relevance_score}%")
-                st.warning("Missing Skills:")
-                st.write(final_report.missing_elements or "None")
-                st.success("Feedback:")
-                st.write(final_report.improvement_feedback)
-
-                progress_bar.progress((i+1)/len(uploaded_files))
-
-            st.balloons()
+            progress_bar.progress(1.0, text="All analyses complete!")
             st.success("All analyses complete!")
+            st.balloons()
 
-# -------------------------- Dashboard Tab --------------------------
+@st.dialog("Full Report")
+def show_report_modal(record_id):
+    record = get_single_record(record_id)
+    if record:
+        st.subheader(f"Analysis for: {record['resume_filename']}")
+        st.metric("Relevance Score", f"{record['score']}%")
+        st.markdown(f"**Verdict:** {record['verdict']}")
+        
+        st.markdown("---")
+        st.subheader("Identified Gaps")
+        st.markdown(record['missing_skills'])
+
+        st.markdown("---")
+        st.subheader("Candidate Feedback")
+        st.info(record['feedback'])
+        
+        st.markdown("---")
+        with st.expander("Show Original Job Description"):
+            st.text_area("JD", value=record['full_jd'], height=200, disabled=True, label_visibility="collapsed")
+    else:
+        st.error("Could not retrieve report.")
+
 with dashboard_tab:
     st.header("Past Analysis Results")
     df = load_data_for_dashboard()
+    
     if df.empty:
-        st.info("No results found.")
+        st.info("No results found. Run a new analysis in the 'Analysis' tab.")
     else:
+        st.subheader("Filter & Manage Results")
         filt_col1, filt_col2, filt_col3 = st.columns(3)
+        
         with filt_col1:
             jd_options = ["All JDs"] + list(df['jd_summary'].unique())
-            selected_jd = st.selectbox("Filter by JD:", options=jd_options)
-        df_filtered = df[df['jd_summary']==selected_jd] if selected_jd!="All JDs" else df
+            selected_jd = st.selectbox("Filter by Job Description:", options=jd_options, key="jd_filter")
+        
+        df_filtered = df[df['jd_summary'] == selected_jd] if selected_jd != "All JDs" else df
+        
         with filt_col2:
             verdict_options = ["All Verdicts"] + list(df_filtered['verdict'].unique())
-            selected_verdict = st.selectbox("Filter by Verdict:", options=verdict_options)
-        df_filtered = df_filtered[df_filtered['verdict']==selected_verdict] if selected_verdict!="All Verdicts" else df_filtered
-        with filt_col3:
-            min_score = st.slider("Minimum Score:", 0, 100, 0)
-        final_df = df_filtered[df_filtered['score']>=min_score]
-        st.dataframe(final_df, hide_index=True)
+            selected_verdict = st.selectbox("Filter by Verdict:", options=verdict_options, key="verdict_filter")
 
+        df_filtered = df_filtered[df_filtered['verdict'] == selected_verdict] if selected_verdict != "All Verdicts" else df_filtered
+
+        with filt_col3:
+            min_score = st.slider("Minimum Score:", 0, 100, 0, key="score_slider")
+
+        final_df = df_filtered[df_filtered['score'] >= min_score].reset_index(drop=True)
+        
+        st.subheader(f"Displaying {len(final_df)} Results")
+        
         if not final_df.empty:
-            st.markdown("---")
-            st.subheader("Delete a Record")
-            delete_options = [f"{row['id']} - {row['candidate_name']} ({row['jd_summary']})" for _, row in final_df.iterrows()]
-            record_to_delete = st.selectbox("Select a record to delete:", delete_options)
-            if st.button("❌ Delete Selected Record"):
-                record_id = int(record_to_delete.split(" - ")[0])
-                delete_analysis_from_db(record_id)
-                st.success(f"Record ID {record_id} deleted.")
-                st.experimental_rerun()
+            for index, row in final_df.iterrows():
+                with st.container(border=True):
+                    col1, col2, col3 = st.columns([5, 1, 1])
+                    with col1:
+                        st.markdown(f"**{row['resume_filename']}**")
+                        st.markdown(f"Score: `{row['score']}%` | Verdict: **{row['verdict']}**")
+                    with col2:
+                        if st.button("Details", key=f"view_{row['id']}", use_container_width=True):
+                            show_report_modal(row['id'])
+                    with col3:
+                        if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
+                            delete_analysis_from_db(row['id'])
+                            st.success(f"Deleted record for {row['resume_filename']}.")
+                            st.rerun()
+        else:
+            st.info("No records match the current filter criteria.")
 
 st.markdown("---")
 st.markdown("Developed by **Siddhant Pal** for the Code4EdTech Challenge by Innomatics Research Labs.")
