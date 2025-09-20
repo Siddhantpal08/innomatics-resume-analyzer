@@ -1,26 +1,15 @@
-# Main Frameworks
-streamlit~=1.36.0
-pandas~=2.2.0
-
-# LangChain Core and Integrations
-langchain~=0.2.0
-langchain-google-genai~=0.1.6
-langchain-community~=0.2.0
-langchain-huggingface~=0.0.3
-
-# Data Handling & NLP
-pydantic~=2.7.0
-PyPDF2~=3.0.0
-python-docx~=1.1.0
-spacy~=3.7.4
-
-# spaCy Model - This is the official package name for the model
+streamlit
+pandas
+langchain
+langchain-google-genai
+langchain-community
+langchain-huggingface
+pydantic
+PyPDF2
+python-docx
+spacy
 en-core-web-sm
-
-# Vector Database and Embeddings
-chromadb~=0.5.0
-sentence-transformers~=3.0.0
-torch~=2.3.0
-
-# Environment Variables
-python-dotenv~=1.0.0
+chromadb
+sentence-transformers
+torch
+python-dotenv
