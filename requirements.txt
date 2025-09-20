@@ -1,9 +1,9 @@
 streamlit
 pandas
-langchain==0.1.147
+langchain
 langchain-google-genai
 langchain-huggingface
-chromadb==0.4.0
+chromadb
 pydantic
 PyPDF2
 python-docx
