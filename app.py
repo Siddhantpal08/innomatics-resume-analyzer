@@ -31,8 +31,7 @@ SKILL_KEYWORDS = [
     'API', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Big Data', 'Hadoop', 'Spark'
 ]
 LOGO_URL_LIGHT = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
-LOGO_URL_DARK = "https://www.innomatics.in/wp-content/uploads/2022/12/logo-1.png" # A white version of the logo
-
+LOGO_URL_DARK = "https://www.innomatics.in/wp-content/uploads/2022/12/logo-1.png"
 
 # --- Pydantic Model for Structured LLM Output ---
 class FinalAnalysis(BaseModel):
@@ -52,11 +51,11 @@ class FinalAnalysis(BaseModel):
 def get_db_connection():
     """Creates a cached, singleton connection to the SQLite database."""
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    conn.row_factory = sqlite3.Row # Allows accessing columns by name
+    conn.row_factory = sqlite3.Row 
     return conn
 
 def init_database():
-    """Initializes the database table, adding the missing_skills column if it doesn't exist."""
+    """Initializes the database table and ensures all columns exist."""
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
@@ -67,16 +66,11 @@ def init_database():
             jd_summary TEXT NOT NULL,
             score INTEGER NOT NULL,
             verdict TEXT NOT NULL,
+            missing_skills TEXT,
             feedback TEXT,
             full_jd TEXT
         )
     ''')
-    # Check if 'missing_skills' column exists and add it if it doesn't
-    c.execute("PRAGMA table_info(results)")
-    columns = [info[1] for info in c.fetchall()]
-    if 'missing_skills' not in columns:
-        c.execute("ALTER TABLE results ADD COLUMN missing_skills TEXT")
-
     conn.commit()
 
 init_database()
@@ -85,7 +79,7 @@ def add_analysis_to_db(filename, jd_text, report: FinalAnalysis):
     """Adds a new analysis report to the database."""
     conn = get_db_connection()
     c = conn.cursor()
-    jd_summary = " ".join(jd_text.split()[:10]).strip() + "..."
+    jd_summary = " ".join(jd_text.split()[:15]).strip() + "..."
     c.execute('''
         INSERT INTO results (timestamp, resume_filename, jd_summary, score, verdict, missing_skills, feedback, full_jd)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -119,7 +113,6 @@ def get_single_record(record_id):
     c = conn.cursor()
     c.execute("SELECT * FROM results WHERE id = ?", (record_id,))
     return c.fetchone()
-
 
 def delete_analysis_from_db(record_id):
     """Deletes a specific analysis record by its ID."""
@@ -234,24 +227,10 @@ with button_col:
             st.session_state.file_uploader_key = str(datetime.now().timestamp())
             st.rerun()
     with sub_col2:
-        # The on_change callback is the reliable way to handle state updates for the toggle
-        def theme_change():
-            st.session_state.dark_mode = not st.session_state.dark_mode
+        # This toggle now correctly updates the session state and triggers a rerun
+        st.toggle("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle")
+        st.session_state.dark_mode = st.session_state.dark_mode_toggle
 
-        st.toggle("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle", on_change=theme_change)
-
-
-# Configure Streamlit's theme based on the session state.
-# This must be done after the toggle widget is created.
-if st.session_state.dark_mode:
-    st.config.set_option('theme.backgroundColor', '#0E1117')
-    st.config.set_option('theme.base', 'dark')
-else:
-    st.config.set_option('theme.backgroundColor', '#FFFFFF')
-    st.config.set_option('theme.base', 'light')
-
-
-# --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
 with analysis_tab:
@@ -313,6 +292,28 @@ with analysis_tab:
             st.success("All analyses complete!")
             st.balloons()
 
+@st.dialog("Full Report")
+def show_report_modal(record_id):
+    record = get_single_record(record_id)
+    if record:
+        st.subheader(f"Analysis for: {record['resume_filename']}")
+        st.metric("Relevance Score", f"{record['score']}%")
+        st.markdown(f"**Verdict:** {record['verdict']}")
+        
+        st.markdown("---")
+        st.subheader("Identified Gaps")
+        st.markdown(record['missing_skills'])
+
+        st.markdown("---")
+        st.subheader("Candidate Feedback")
+        st.info(record['feedback'])
+        
+        st.markdown("---")
+        with st.expander("Show Original Job Description"):
+            st.text_area("JD", value=record['full_jd'], height=200, disabled=True, label_visibility="collapsed")
+    else:
+        st.error("Could not retrieve report.")
+
 with dashboard_tab:
     st.header("Past Analysis Results")
     df = load_data_for_dashboard()
@@ -344,11 +345,6 @@ with dashboard_tab:
         
         if not final_df.empty:
             for index, row in final_df.iterrows():
-                # Define a modal for each row
-                modal_key = f"modal_{row['id']}"
-                if modal_key not in st.session_state:
-                    st.session_state[modal_key] = False
-
                 with st.container(border=True):
                     row_col1, row_col2, row_col3 = st.columns([4, 1, 1])
                     with row_col1:
@@ -356,39 +352,12 @@ with dashboard_tab:
                         st.markdown(f"Score: **{row['score']}%** | Verdict: **{row['verdict']}**")
                     with row_col2:
                         if st.button("View Details", key=f"view_{row['id']}", use_container_width=True):
-                            st.session_state[modal_key] = True
+                            show_report_modal(row['id'])
                     with row_col3:
                         if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
                             delete_analysis_from_db(row['id'])
                             st.success(f"Deleted record for {row['resume_filename']}.")
                             st.rerun()
-
-                # Modal display logic
-                if st.session_state[modal_key]:
-                    with st.container(): # Use a container to manage the modal
-                        with st.modal(title=f"Full Report for {row['resume_filename']}"):
-                            record = get_single_record(row['id'])
-                            if record:
-                                st.subheader("Analysis Summary")
-                                st.metric("Relevance Score", f"{record['score']}%")
-                                st.markdown(f"**Verdict:** {record['verdict']}")
-                                
-                                st.markdown("---")
-                                st.subheader("Identified Gaps")
-                                st.markdown(record['missing_skills'])
-
-                                st.markdown("---")
-                                st.subheader("Candidate Feedback")
-                                st.markdown(record['feedback'])
-                                
-                                st.markdown("---")
-                                st.subheader("Original Job Description")
-                                st.text_area("JD", value=record['full_jd'], height=200, disabled=True)
-                            
-                            if st.button("Close", key=f"close_{row['id']}"):
-                                st.session_state[modal_key] = False
-                                st.rerun()
-
         else:
             st.info("No records match the current filter criteria.")
 
