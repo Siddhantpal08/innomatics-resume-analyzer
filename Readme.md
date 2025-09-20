@@ -1,75 +1,79 @@
 🤖 Automated Resume Relevance Checker
-A Submission for the Code4Edtech Challenge by Innomatics Research Labs
-This project is a sophisticated, AI-powered system designed to solve a critical problem for the Innomatics Placement Team: the manual, time-consuming, and inconsistent process of resume evaluation. This application automates the entire workflow, providing a scalable, consistent, and insightful analysis of a candidate's suitability for a given job role.
+A Hackathon Submission for the Code4EdTech Challenge by Innomatics Research Labs
+This project is a comprehensive, AI-powered system designed to automate and scale the resume evaluation process for the Innomatics Placement Team. It directly addresses the challenges of manual, time-consuming, and inconsistent resume screening by providing instant, data-driven analysis of a candidate's relevance to a specific job description.
 
-✨ Live Demo
-[Link to Deployed Application on Streamlit Cloud] (<- You will paste your URL here after deployment)
+Developed by: Siddhant Pal
+
+🚀 Live Application
+[Link to Deployed Application on Streamlit Cloud] <!-- THIS WILL BE FILLED IN AFTER DEPLOYMENT -->
 
 🎯 The Problem
-The Innomatics placement team receives thousands of applications for dozens of job roles weekly. The manual process of sifting through resumes to find qualified candidates is a major bottleneck, leading to:
+The Innomatics placement team receives thousands of applications for dozens of job roles weekly across multiple locations. The manual process of reviewing each resume against a job description (JD) is a significant bottleneck, leading to:
 
-Delays: Slow shortlisting processes for hiring companies.
+Delays: Slow shortlisting of qualified candidates.
 
-Inconsistency: Different evaluators can interpret requirements differently, leading to biased or inconsistent results.
+Inconsistency: Subjective judgments from different evaluators.
 
-High Workload: Placement staff spend more time on manual screening and less time on high-value tasks like student guidance and interview preparation.
+High Workload: Reduced capacity for placement staff to focus on high-value tasks like student guidance and interview preparation.
 
-This project directly addresses these challenges by building the automated system proposed in the hackathon problem statement.
+This project was built to solve these problems with a robust, scalable, and intelligent solution.
 
-🚀 Our Solution: A Hybrid AI Scoring Engine
-I developed a multi-stage Hybrid Scoring Engine that combines the speed of traditional NLP with the deep contextual understanding of modern Large Language Models (LLMs). This ensures both accuracy and efficiency.
+✨ Our Solution: A Hybrid AI Architecture
+This system is not just a simple AI wrapper; it's a sophisticated, multi-stage pipeline designed for both accuracy and explainability.
 
-The analysis pipeline works in three stages:
+Hard Match Analysis: The system first performs a high-speed, objective screening using a custom dictionary of over 50 key technical skills. It leverages spaCy's efficient PhraseMatcher to instantly identify which required skills are present in the resume and which are missing. This provides a foundational, keyword-based score.
 
-Hard Match Analysis: The system first performs a high-speed keyword analysis using spaCy, a production-grade NLP library. It parses the Job Description to create a checklist of required skills and then rapidly scans each resume to calculate an initial keyword match score.
+Semantic Match Analysis: To understand the context and meaning beyond keywords, the system then employs a pretrained Sentence-BERT model (all-MiniLM-L6-v2). It breaks the resume into meaningful chunks, converts them into vector embeddings, and stores them in a local ChromaDB vector database. The key requirements from the job description are then used to perform a similarity search, retrieving the most conceptually relevant sections of the candidate's experience, even if they don't use the exact same wording.
 
-Semantic Match Analysis: To understand the context beyond keywords, the system uses a pretrained Sentence-BERT model (all-MiniLM-L6-v2) to generate vector embeddings. The resume is broken into logical chunks, embedded, and stored in a ChromaDB vector database. The core requirements of the Job Description are then used to perform a similarity search, instantly finding the most conceptually relevant sections of the resume, even if they don't use the exact same terminology.
+LLM Synthesis & Feedback Generation: The final and most powerful stage feeds the pre-analyzed data from the first two stages into a large language model (Google's Gemini 1.5 Flash). The LLM is given a specific persona—an expert HR Technology Analyst—and a structured task: to synthesize the hard skill matches, semantic relevance, and missing keywords into a final, holistic report.
 
-LLM Synthesis & Feedback Generation: Finally, the pre-processed data from the first two stages is synthesized by a powerful LLM (Google's Gemini 1.5 Flash). The LLM is given a specific persona—an expert HR Analyst—and is tasked with generating the final, comprehensive report based only on the provided data. This includes:
+This hybrid approach ensures the final output is grounded in objective data while being enriched with nuanced, AI-driven insights.
 
-A final Relevance Score (0-100).
+🏆 Core Features
+Bulk Resume Processing: Upload and analyze multiple resumes (PDF & DOCX) against a single job description in one go.
 
-A clear Verdict (High, Medium, or Low Suitability).
+Hybrid Scoring: Generates a weighted Relevance Score (0-100) based on both keyword matches and semantic context.
 
-A list of Identified Gaps (missing skills, etc.).
+Automated Verdict: Provides a clear verdict of High, Medium, or Low Suitability for each candidate.
 
-Personalized, Actionable Feedback for the student.
+Actionable Feedback:
+
+Highlights specific skill gaps and missing qualifications for the placement team.
+
+Generates personalized, constructive feedback for each student on how to improve their resume for that specific role.
+
+Persistent Dashboard: All analysis results are saved to a local SQLite database. The interactive dashboard allows the placement team to view, search, and filter all historical results by Job Description, Verdict, and Score.
+
+Full Data Management: The dashboard includes the ability to permanently delete records that are no longer needed.
 
 🛠️ Tech Stack
-This project was built using a modern, robust, and scalable tech stack as recommended in the problem statement.
-
 Language: Python
 
 Web Framework: Streamlit
+
+Database: SQLite
+
+Data Handling: Pandas
 
 AI Orchestration: LangChain
 
 LLM: Google Gemini 1.5 Flash
 
-NLP (Hard Match): spaCy
+Hard Match NLP: spaCy
 
-Embeddings (Semantic Match): Hugging Face Sentence-BERT (all-MiniLM-L6-v2)
+Semantic Search:
+
+Embeddings: Sentence-BERT (all-MiniLM-L6-v2) via Hugging Face
 
 Vector Database: ChromaDB
 
-Database: SQLite
-
-📋 Features
-Bulk Resume Processing: Upload and analyze multiple resumes (PDF & DOCX) simultaneously.
-
-Persistent Dashboard: All analysis results are saved to a local SQLite database.
-
-Advanced Filtering: The dashboard allows the placement team to search and filter results by Job Description, AI Verdict, and Score.
-
-Data Management: Functionality to delete old or irrelevant records directly from the dashboard.
-
-Polished UI/UX: A clean, intuitive, and professional user interface with custom loaders and animations.
+Structured Output: Pydantic
 
 ⚙️ How to Run Locally
 Clone the repository:
 
-git clone [YOUR_GITHUB_REPO_URL]
-cd [repository-name]
+git clone [https://github.com/Siddhantpal08/innomatics-resume-analyzer.git](https://github.com/Siddhantpal08/innomatics-resume-analyzer.git)
+cd innomatics-resume-analyzer
 
 Create and activate a virtual environment:
 
@@ -83,10 +87,12 @@ Install dependencies:
 
 pip install -r requirements.txt
 
-Create a .env file in the root directory and add your Google Gemini API key:
+Create a .env file in the project root and add your Google API key:
 
 GOOGLE_API_KEY="YOUR_API_KEY_HERE"
 
 Run the Streamlit app:
 
 streamlit run app.py
+
+This project was built with passion and a deep understanding of the problem statement to provide a truly valuable tool for the Innomatics ecosystem.
