@@ -1,15 +1,27 @@
-streamlit
-langchain
-langchain-google-genai
-python-dotenv
-pypdf
-PyPDF2
-python-docx
-spacy
+Main Frameworks
+streamlit~=1.36.0
+pandas~=2.2.0
+
+LangChain Core and Integrations
+langchain~=0.2.0
+langchain-google-genai~=0.1.6
+langchain-community~=0.2.0
+langchain-huggingface~=0.0.3
+
+Data Handling & NLP
+pydantic~=2.7.0
+PyPDF2~=3.0.0
+python-docx~=1.1.0
+spacy~=3.7.4
+
+spaCy Model - Direct download link to avoid deployment errors
+This specific version is compatible with spaCy v3.7.x
 https://www.google.com/search?q=https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz%23egg%3Den_core_web_sm
-langchain-community
-chromadb
-sentence-transformers
-torch
-pydantic
-langchain-huggingface
+
+Vector Database and Embeddings
+chromadb~=0.5.0
+sentence-transformers~=3.0.0
+torch~=2.3.0
+
+Environment Variables
+python-dotenv~=1.0.0
