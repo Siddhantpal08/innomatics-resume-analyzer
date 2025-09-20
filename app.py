@@ -208,38 +208,8 @@ def get_llm_analysis(jd_text, resume_text):
 # --- Main App UI & Logic ---
 st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide")
 
-# --- Dark Mode CSS ---
-st.markdown("""
-<style>
-    body[data-theme="dark"] {
-        --background-color: #0E1117;
-        --secondary-background-color: #262730;
-        --primary-color: #FAFAFA;
-        --secondary-color: #B9B9C3;
-    }
-    body[data-theme="light"] {
-        --background-color: #FFFFFF;
-        --secondary-background-color: #F0F2F6;
-        --primary-color: #0E1117;
-        --secondary-color: #5A5A64;
-    }
-    .stApp {
-        background-color: var(--background-color);
-        color: var(--primary-color);
-    }
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--primary-color);
-    }
-    .st-emotion-cache-183lzff { /* container border */
-        border-color: var(--secondary-color);
-    }
-    .st-emotion-cache-1r6slb0, .st-emotion-cache-1d3w5bk { /* text area and text input */
-         background-color: var(--secondary-background-color);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Session state initialization
+# --- Dark Mode CSS & JS ---
+# Session state initialization must happen before widgets are created
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 if 'file_uploader_key' not in st.session_state:
@@ -247,14 +217,36 @@ if 'file_uploader_key' not in st.session_state:
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
 
-# Apply theme based on session state
-st.markdown(f'<body data-theme="{"dark" if st.session_state.dark_mode else "light"}"></body>', unsafe_allow_html=True)
+# JavaScript to toggle the theme attribute on the parent document's body
+theme_js = f"""
+<script>
+    function applyTheme(isDarkMode) {{
+        const parentBody = parent.document.body;
+        if (parentBody) {{
+            parentBody.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
+        }}
+    }}
+    applyTheme({str(st.session_state.dark_mode).lower()});
+</script>
+"""
+st.components.v1.html(theme_js, height=0)
+
+# CSS that uses the data-theme attribute and inverts the logo
+st.markdown("""
+<style>
+    body[data-theme="dark"] .innomatics-logo img {
+        filter: invert(1) hue-rotate(180deg);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 # --- Header ---
 title_col, button_col = st.columns([3, 1])
 with title_col:
+    st.markdown('<div class="innomatics-logo">', unsafe_allow_html=True) # Class for CSS targeting
     st.image("https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png", width=250)
+    st.markdown('</div>', unsafe_allow_html=True)
     st.title("Placement Team Dashboard")
 
 with button_col:
@@ -266,7 +258,8 @@ with button_col:
             st.session_state.file_uploader_key = str(datetime.now().timestamp())
             st.rerun()
     with sub_col2:
-        st.session_state.dark_mode = st.toggle("🌙 Dark", value=st.session_state.dark_mode, key="dark_mode_toggle")
+        # The on_change callback ensures the state is set before the script reruns
+        st.toggle("🌙 Dark", value=st.session_state.dark_mode, key="dark_mode_toggle")
 
 
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
@@ -277,7 +270,13 @@ with analysis_tab:
         col1, col2 = st.columns([2, 1])
         with col1:
             st.subheader("📋 Job Description")
-            jd_text = st.text_area("Paste the Job Description text here:", height=300, key="jd_text_key", label_visibility="collapsed")
+            jd_text = st.text_area(
+                "Paste the Job Description text here:", 
+                height=300, 
+                key="jd_text_key", 
+                label_visibility="collapsed",
+                placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL. Experience with AWS is a plus...'"
+            )
         with col2:
             st.subheader("📄 Candidate Resumes")
             uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key=st.session_state.file_uploader_key, label_visibility="collapsed")
@@ -357,7 +356,16 @@ with dashboard_tab:
             st.dataframe(
                 final_df[['id', 'timestamp', 'resume_filename', 'jd_summary', 'score', 'verdict', 'missing_skills']].style.apply(highlight_verdict, axis=1),
                 hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", width="small"),
+                    "timestamp": st.column_config.TextColumn("Time"),
+                    "resume_filename": st.column_config.TextColumn("Resume"),
+                    "jd_summary": st.column_config.TextColumn("JD"),
+                    "score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                    "verdict": st.column_config.TextColumn("Verdict"),
+                    "missing_skills": st.column_config.TextColumn("Missing Skills", width="large"),
+                }
             )
             
             st.markdown("---")
