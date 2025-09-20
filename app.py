@@ -37,26 +37,27 @@ SKILL_KEYWORDS = [
 
 # --- Pydantic Model ---
 class FinalAnalysis(BaseModel):
-    relevance_score: int = Field(description="Final relevance score from 0 to 100.")
-    verdict: str = Field(description="High, Medium, or Low Suitability.")
-    missing_skills: List[str] = Field(description="Critical skills missing from resume.")
-    candidate_feedback: str = Field(description="Concise, actionable feedback.")
+    relevance_score: int = Field(description="Score 0-100")
+    verdict: str = Field(description="High/Medium/Low Suitability")
+    missing_skills: List[str] = Field(description="3-5 critical missing skills")
+    candidate_feedback: str = Field(description="Professional feedback")
 
     @validator('relevance_score')
     def score_must_be_in_range(cls, v):
         if not 0 <= v <= 100:
-            raise ValueError('Relevance score must be 0-100')
+            raise ValueError('Relevance score must be between 0 and 100')
         return v
 
-# --- Database Management ---
-@st.cache_resource
+# --- Database Handling ---
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    """Single shared connection with timeout."""
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
+conn = get_db_connection()
+
 def init_database():
-    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS results (
@@ -74,46 +75,33 @@ def init_database():
     ''')
     conn.commit()
 
-def migrate_database():
-    """Ensure candidate_name column exists in case of old DB."""
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("PRAGMA table_info(results)")
-    columns = [col[1] for col in c.fetchall()]
-    if "candidate_name" not in columns:
-        c.execute("ALTER TABLE results ADD COLUMN candidate_name TEXT NOT NULL DEFAULT 'Unknown'")
-    conn.commit()
-
 init_database()
-migrate_database()
 
 def add_analysis_to_db(candidate_name, filename, jd_text, report: FinalAnalysis):
-    conn = get_db_connection()
-    c = conn.cursor()
+    """Safely insert analysis into DB."""
     jd_summary = " ".join(jd_text.split()[:15]).strip() + "..."
-    c.execute('''
-        INSERT INTO results (timestamp, candidate_name, resume_filename, jd_summary, score, verdict, missing_skills, feedback, full_jd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        datetime.now(),
-        candidate_name,
-        filename,
-        jd_summary,
-        report.relevance_score,
-        report.verdict,
-        ", ".join(report.missing_skills) if report.missing_skills else "N/A",
-        report.candidate_feedback,
-        jd_text
-    ))
-    conn.commit()
+    try:
+        with conn:  # commits and releases lock automatically
+            conn.execute('''
+                INSERT INTO results (timestamp, candidate_name, resume_filename, jd_summary, score, verdict, missing_skills, feedback, full_jd)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                datetime.now(),
+                candidate_name,
+                filename,
+                jd_summary,
+                report.relevance_score,
+                report.verdict,
+                ", ".join(report.missing_skills) if report.missing_skills else "N/A",
+                report.candidate_feedback,
+                jd_text
+            ))
+    except sqlite3.OperationalError as e:
+        st.error(f"SQLite write error: {e}")
 
 def load_data_for_dashboard():
-    conn = get_db_connection()
     try:
-        df = pd.read_sql_query(
-            "SELECT id, candidate_name, timestamp, resume_filename, jd_summary, score, verdict, missing_skills FROM results ORDER BY id DESC",
-            conn
-        )
+        df = pd.read_sql_query("SELECT * FROM results ORDER BY id DESC", conn)
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
         return df
@@ -122,16 +110,16 @@ def load_data_for_dashboard():
         return pd.DataFrame()
 
 def get_single_record(record_id):
-    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM results WHERE id = ?", (record_id,))
     return c.fetchone()
 
 def delete_analysis_from_db(record_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM results WHERE id = ?", (record_id,))
-    conn.commit()
+    try:
+        with conn:
+            conn.execute("DELETE FROM results WHERE id = ?", (record_id,))
+    except sqlite3.OperationalError as e:
+        st.error(f"SQLite delete error: {e}")
 
 # --- UI Helpers ---
 def style_verdict(verdict):
@@ -157,83 +145,70 @@ def get_file_text(uploaded_file):
 
 @st.cache_data
 def extract_skills_from_text(text):
-    skill_pattern = r"\b(" + "|".join(re.escape(skill) for skill in SKILL_KEYWORDS) + r")\b"
-    matches = re.findall(skill_pattern, text, re.IGNORECASE)
+    pattern = r"\b(" + "|".join(re.escape(skill) for skill in SKILL_KEYWORDS) + r")\b"
+    matches = re.findall(pattern, text, re.IGNORECASE)
     return sorted(list(set(match.title() for match in matches)))
 
 def get_llm_analysis(jd_text, resume_text):
     if not GOOGLE_API_KEY:
-        st.error("Google API Key is missing")
+        st.error("Google API Key not configured.")
         return None
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
+    
     prompt_template = """
-    You are a world-class Senior Technical Recruiter...
+    You are a senior recruiter. Evaluate resume vs JD and output JSON adhering to FinalAnalysis model.
+    JD:
+    {jd}
+    Resume:
+    {resume}
     {format_instructions}
     """
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["jd", "resume"],
-        partial_variables={"format_instructions": parser.get_format_instructions()}
-    )
+    prompt = PromptTemplate(template=prompt_template, input_variables=["jd","resume"], partial_variables={"format_instructions": parser.get_format_instructions()})
     chain = prompt | model | parser
     return chain.invoke({"jd": jd_text, "resume": resume_text})
 
-# --- Streamlit UI ---
-if 'file_uploader_key' not in st.session_state:
-    st.session_state.file_uploader_key = str(datetime.now().timestamp())
-if 'jd_text_key' not in st.session_state:
-    st.session_state.jd_text_key = ''
+# --- Streamlit App ---
+st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide")
+st.title("📊 Placement Team Dashboard")
+st.image(LOGO_URL, width=250)
 
-st.markdown("""<style>body[data-theme="dark"] .stImage > img { filter: invert(1); }</style>""", unsafe_allow_html=True)
-title_col, button_col = st.columns([4, 1])
-with title_col:
-    st.image(LOGO_URL, width=250)
-    st.title("Placement Team Dashboard")
-with button_col:
-    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True)
-    if st.button("🧹 Clear Session"):
-        st.session_state.jd_text_key = ""
-        st.session_state.file_uploader_key = str(datetime.now().timestamp())
-        st.rerun()
+# --- File Uploader ---
+jd_text = st.text_area("Paste Job Description:", height=300)
+uploaded_files = st.file_uploader("Upload Resumes", type=["pdf","docx"], accept_multiple_files=True)
 
-analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
-
-with analysis_tab:
-    st.header("Run a New Analysis")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        jd_text = st.text_area("Paste Job Description here:", height=300, key="jd_text_key")
-    with col2:
-        uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key=st.session_state.file_uploader_key)
-
-    if st.button("🚀 Run Full Analysis"):
-        if not jd_text.strip() or not uploaded_files:
-            st.error("Provide JD and at least one resume.")
-        else:
-            for resume_file in uploaded_files:
-                resume_text = get_file_text(resume_file)
-                if not resume_text: continue
-                candidate_name = os.path.splitext(resume_file.name)[0]
-                with st.spinner(f"Analyzing {resume_file.name}..."):
-                    try:
-                        final_report = get_llm_analysis(jd_text, resume_text)
-                        if final_report:
-                            add_analysis_to_db(candidate_name, resume_file.name, jd_text, final_report)
-                            st.markdown(f"### {candidate_name}")
-                            st.markdown(style_verdict(final_report.verdict), unsafe_allow_html=True)
-                            st.metric("Score", f"{final_report.relevance_score}%")
-                    except Exception as e:
-                        st.error(f"Error analyzing {resume_file.name}: {e}")
-                        st.exception(e)
-
-with dashboard_tab:
-    st.header("Past Analysis Results")
-    df = load_data_for_dashboard()
-    if not df.empty:
-        st.dataframe(df)
+if st.button("🚀 Run Full Analysis"):
+    if not jd_text.strip() or not uploaded_files:
+        st.error("Provide both JD and at least one resume.")
     else:
-        st.info("No results yet.")
+        required_skills = set(extract_skills_from_text(jd_text))
+        st.info(f"**Required Skills Detected in JD:** {', '.join(required_skills) if required_skills else 'None'}")
+        
+        for resume_file in uploaded_files:
+            candidate_name = resume_file.name.split(".")[0]
+            st.markdown(f"### Candidate: {candidate_name}")
+            resume_text = get_file_text(resume_file)
+            if not resume_text: continue
 
+            with st.spinner(f"Analyzing {resume_file.name}..."):
+                try:
+                    final_report = get_llm_analysis(jd_text, resume_text)
+                    if final_report:
+                        add_analysis_to_db(candidate_name, resume_file.name, jd_text, final_report)
+                        st.markdown(style_verdict(final_report.verdict), unsafe_allow_html=True)
+                        st.metric("Score", f"{final_report.relevance_score}%")
+                        st.warning("**Identified Gaps:**")
+                        st.markdown("\n".join([f"- {item}" for item in final_report.missing_skills]) or "- None")
+                        st.success("**Feedback:**")
+                        st.write(final_report.candidate_feedback)
+                except Exception as e:
+                    st.error(f"Error analyzing {resume_file.name}: {e}")
+
+# --- Dashboard ---
 st.markdown("---")
-st.markdown("Developed by **Siddhant Pal** for the Code4EdTech Challenge by Innomatics Research Labs.")
+st.header("Past Analysis Results")
+df = load_data_for_dashboard()
+if df.empty:
+    st.info("No results yet.")
+else:
+    st.dataframe(df[['timestamp','candidate_name','resume_filename','score','verdict']])
