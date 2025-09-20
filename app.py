@@ -15,12 +15,16 @@ from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 
+# --- PAGE CONFIG (MUST BE THE FIRST STREAMLIT COMMAND) ---
+st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide", initial_sidebar_state="collapsed")
+
 # --- Load Environment Variables ---
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- Global Configurations ---
 DB_FILE = "analysis_results.db"
+LOGO_URL = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
 SKILL_KEYWORDS = [
     'Python', 'Java', 'C++', 'JavaScript', 'Go', 'Ruby', 'PHP', 'Django', 'Flask', 'Spring Boot', 'Node.js', 
     'React', 'Angular', 'Vue.js', 'SQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Cassandra', 
@@ -30,8 +34,6 @@ SKILL_KEYWORDS = [
     'Matplotlib', 'Seaborn', 'Tableau', 'Power BI', 'Natural Language Processing', 'NLP', 
     'API', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Big Data', 'Hadoop', 'Spark'
 ]
-LOGO_URL_LIGHT = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
-LOGO_URL_DARK = "https://www.innomatics.in/wp-content/uploads/2022/12/logo-1.png"
 
 # --- Pydantic Model for Structured LLM Output ---
 class FinalAnalysis(BaseModel):
@@ -55,7 +57,7 @@ def get_db_connection():
     return conn
 
 def init_database():
-    """Initializes the database table and ensures all columns exist."""
+    """Initializes the database table."""
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
@@ -154,6 +156,9 @@ def extract_skills_from_text(text):
 
 def get_llm_analysis(jd_text, resume_text):
     """Orchestrates the LLM call for a comprehensive analysis."""
+    if not GOOGLE_API_KEY:
+        st.error("Google API Key is not configured. Please set it in your secrets.")
+        return None
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
     
@@ -201,7 +206,6 @@ def get_llm_analysis(jd_text, resume_text):
     })
 
 # --- Main App UI & Logic ---
-st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide", initial_sidebar_state="collapsed")
 
 # Session state initialization
 if 'dark_mode' not in st.session_state:
@@ -211,11 +215,49 @@ if 'file_uploader_key' not in st.session_state:
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
 
+# CSS for theming and logo inversion
+st.markdown(f"""
+<style>
+    :root {{
+        --bg-color: #FFFFFF;
+        --secondary-bg-color: #F0F2F6;
+        --text-color: #31333F;
+        --secondary-text-color: #5A5A64;
+        --border-color: #E6E6E6;
+    }}
+    html[data-theme="dark"] {{
+        --bg-color: #0E1117;
+        --secondary-bg-color: #262730;
+        --text-color: #FAFAFA;
+        --secondary-text-color: #B9B9C3;
+        --border-color: #31333F;
+    }}
+    .stApp {{
+        background-color: var(--bg-color);
+    }}
+    /* Invert logo in dark mode */
+    html[data-theme="dark"] .innomatics-logo img {{
+        filter: invert(1) hue-rotate(180deg);
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# JavaScript to apply the theme
+st.components.v1.html(f"""
+<script>
+    const streamlitDoc = parent.document;
+    const theme = {'true' if st.session_state.dark_mode else 'false'} ? 'dark' : 'light';
+    streamlitDoc.documentElement.setAttribute('data-theme', theme);
+</script>
+""", height=0)
+
+
 # --- Header ---
 title_col, button_col = st.columns([3, 1])
 with title_col:
-    logo_url = LOGO_URL_DARK if st.session_state.dark_mode else LOGO_URL_LIGHT
-    st.image(logo_url, width=250)
+    st.markdown('<div class="innomatics-logo">', unsafe_allow_html=True)
+    st.image(LOGO_URL, width=250)
+    st.markdown('</div>', unsafe_allow_html=True)
     st.title("Placement Team Dashboard")
 
 with button_col:
@@ -227,10 +269,10 @@ with button_col:
             st.session_state.file_uploader_key = str(datetime.now().timestamp())
             st.rerun()
     with sub_col2:
-        # This toggle now correctly updates the session state and triggers a rerun
         st.toggle("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle")
-        st.session_state.dark_mode = st.session_state.dark_mode_toggle
 
+
+# --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
 with analysis_tab:
@@ -254,8 +296,6 @@ with analysis_tab:
     if st.button("🚀 Run Full Analysis", type="primary", key="analysis_button", use_container_width=True):
         if not jd_text.strip() or not uploaded_files:
             st.error("Please provide both a Job Description and at least one resume.")
-        elif not GOOGLE_API_KEY:
-            st.error("Google API Key not found. Please set it in your environment variables/secrets.")
         else:
             required_skills = set(extract_skills_from_text(jd_text))
             st.info(f"**Required Skills Detected in JD:** {', '.join(required_skills) if required_skills else 'None'}")
@@ -287,6 +327,7 @@ with analysis_tab:
                                     st.write(final_report.candidate_feedback)
                         except Exception as e:
                             st.error(f"An error occurred while analyzing {resume_file.name}: {e}")
+                            st.exception(e)
 
             progress_bar.progress(1.0, text="All analyses complete!")
             st.success("All analyses complete!")
