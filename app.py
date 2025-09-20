@@ -5,10 +5,7 @@ from PyPDF2 import PdfReader
 from docx import Document
 import re
 import os
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.vectorstores import Chroma
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import PromptTemplate
 from langchain.pydantic_v1 import BaseModel, Field
 from langchain_core.output_parsers import JsonOutputParser
@@ -63,45 +60,13 @@ def get_resume_text(uploaded_file):
 
 @st.cache_data
 def get_hard_skills_matches(resume_text):
-    """
-    Performs a simple, case-insensitive search for skills in the resume text.
-    This replaces the spaCy PhraseMatcher with pure Python for better compatibility.
-    """
     matched_skills = []
-    # Prepare the resume text for searching
     resume_text_lower = resume_text.lower()
-    
     for skill in SKILL_DB:
-        # Use regex with word boundaries to find whole words only
-        # This prevents matching "java" in "javascript", for example.
         pattern = r"\b" + re.escape(skill.lower()) + r"\b"
         if re.search(pattern, resume_text_lower):
             matched_skills.append(skill)
-            
     return list(set(matched_skills))
-
-@st.cache_resource
-def get_conversational_chain(jd_text):
-    try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GOOGLE_API_KEY)
-        
-        # Split JD text into chunks for vector store
-        text_chunks = [jd_text] # Simple split, can be improved
-        
-        vector_store = Chroma.from_texts(text_chunks, embedding=embeddings, collection_name="jd_collection")
-        
-        memory = ConversationBufferMemory(name="chat_history", memory_key="chat_history", return_messages=True)
-        
-        chain = ConversationalRetrievalChain.from_llm(
-            llm=ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0.2),
-            retriever=vector_store.as_retriever(),
-            memory=memory,
-            verbose=True
-        )
-        return chain
-    except Exception as e:
-        st.error(f"Error creating conversational chain: {e}")
-        return None
 
 # --- Pydantic Models for Structured Output ---
 class AnalysisResult(BaseModel):
@@ -111,8 +76,11 @@ class AnalysisResult(BaseModel):
     candidate_feedback: str = Field(description="Constructive, personalized feedback for the candidate on how to improve their resume for this specific role.")
 
 # --- Streamlit UI ---
-
 st.set_page_config(page_title="🤖 Automated Resume Relevance Checker", layout="wide")
+
+# --- Initialize Session State ---
+if 'selected_record_id' not in st.session_state:
+    st.session_state.selected_record_id = None
 
 # --- Sidebar ---
 st.sidebar.title("Navigation")
@@ -120,13 +88,13 @@ page = st.sidebar.radio("Go to", ["Analyze Resumes", "View Analysis History"])
 st.sidebar.markdown("---")
 st.sidebar.write("Developed for the Innomatics Code4EdTech Hackathon.")
 
-# --- Main Application Logic ---
+# --- Main App Page ---
 def main_app():
     st.title("🤖 Automated Resume Relevance Checker")
     st.markdown("##### Upload a Job Description and one or more resumes to get an AI-powered relevance analysis.")
     st.markdown("---")
     
-    jd_text = st.text_area("Paste the Job Description here:", height=200)
+    jd_text = st.text_area("Paste the Job Description here:", height=200, key="jd_text_main")
     uploaded_files = st.file_uploader("Upload Resumes (PDF or DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
 
     if st.button("Analyze Resumes", type="primary"):
@@ -134,14 +102,15 @@ def main_app():
             st.warning("Please provide both a Job Description and at least one resume.")
             return
         if not GOOGLE_API_KEY:
-            st.error("Google API Key not found. Please set it in your .env file.")
+            st.error("Google API Key not found. Please set it in your secrets.")
             return
 
-        progress_bar = st.progress(0)
+        progress_bar = st.progress(0, text="Starting Analysis...")
         total_files = len(uploaded_files)
         
         for i, uploaded_file in enumerate(uploaded_files):
-            with st.spinner(f"Analyzing {uploaded_file.name}..."):
+            progress_bar.progress((i) / total_files, text=f"Analyzing {uploaded_file.name}...")
+            with st.container():
                 try:
                     resume_text = get_resume_text(uploaded_file)
                     if not resume_text:
@@ -155,23 +124,23 @@ def main_app():
                     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0.1)
                     parser = JsonOutputParser(pydantic_object=AnalysisResult)
 
+                    # --- IMPROVED PROMPT ---
                     prompt_template = """
-                    You are an expert HR Technology Analyst specializing in resume evaluation.
-                    Your task is to provide a detailed, data-driven analysis of a resume against a job description.
+                    You are an expert HR Technology Analyst. Your task is to provide a precise, data-driven analysis of a resume against a job description.
 
                     CONTEXT:
-                    Job Description: {jd}
-                    Resume Text: {resume}
-                    Hard Skills Found in Resume: {skills}
+                    - Job Description: {jd}
+                    - Resume Text: {resume}
+                    - Pre-matched Hard Skills: {skills}
 
-                    INSTRUCTIONS:
-                    Based on ALL the provided context, perform the following actions:
-                    1.  **Calculate Relevance Score:** Determine a score from 0-100. Base this on the presence of required skills, the depth of relevant experience described, and the overall alignment with the job description. The hard skills list is a good starting point, but you must analyze the semantic meaning of the resume text for a complete picture.
-                    2.  **Give a Verdict:** Based on the score, provide a verdict: 'High Suitability' (score > 75), 'Medium Suitability' (score 45-75), or 'Low Suitability' (score < 45).
-                    3.  **Identify Missing Skills:** List the most critical skills mentioned in the job description that are NOT found or strongly implied in the resume.
-                    4.  **Generate Candidate Feedback:** Write a brief, constructive paragraph for the candidate. Start by acknowledging their strengths, then suggest specific ways they can improve their resume to better align with this job role. Mention 2-3 key areas from the JD they should highlight more. Be encouraging and professional.
+                    INSTRUCTIONS: Follow these steps precisely.
+                    1.  **Analyze JD Requirements:** First, identify the top 5-7 most important technical skills and qualifications explicitly required by the job description.
+                    2.  **Compare and Identify Missing Skills:** Compare the list of required skills from the JD against the ENTIRE resume content and the provided "Pre-matched Hard Skills". List only the critical skills that are genuinely missing from the resume. Do not infer skills that aren't present.
+                    3.  **Calculate Relevance Score:** Based on the comparison, determine a score from 0-100. The score should reflect the alignment of skills, experience, and qualifications. A high score requires strong evidence of multiple key skills from the JD.
+                    4.  **Give a Verdict:** Provide a verdict based on the score: 'High Suitability' (score > 75), 'Medium Suitability' (score 45-75), or 'Low Suitability' (score < 45).
+                    5.  **Generate Candidate Feedback:** Write a brief, professional paragraph for the candidate. Acknowledge their strengths and then suggest specific ways to improve their resume for this role, mentioning 2-3 key missing skills they should focus on acquiring or highlighting.
 
-                    Please format your entire output as a single JSON object with the following keys: "relevance_score", "verdict", "missing_skills", "candidate_feedback".
+                    Format your entire output as a single JSON object with these exact keys: "relevance_score", "verdict", "missing_skills", "candidate_feedback".
                     {format_instructions}
                     """
                     
@@ -197,11 +166,11 @@ def main_app():
                     with col2:
                         st.metric("Verdict", analysis['verdict'])
                     
-                    st.write("**Missing Skills:**")
-                    st.write(", ".join(analysis['missing_skills']) if analysis['missing_skills'] else "None specified.")
-
-                    st.write("**Feedback for Candidate:**")
-                    st.info(analysis['candidate_feedback'])
+                    with st.expander("View Details"):
+                        st.write("**Missing Skills Identified:**")
+                        st.warning(", ".join(analysis['missing_skills']) if analysis['missing_skills'] else "No critical skills appear to be missing.")
+                        st.write("**Personalized Feedback for Candidate:**")
+                        st.info(analysis['candidate_feedback'])
                     
                     # Save to DB
                     conn = sqlite3.connect('resume_analysis.db')
@@ -214,80 +183,103 @@ def main_app():
                     conn.close()
 
                 except Exception as e:
-                    st.error(f"An error occurred while analyzing {uploaded_file.name}: {e}")
+                    st.error(f"An error occurred while analyzing {uploaded_file.name}: {str(e)}")
                 
                 finally:
-                    progress_bar.progress((i + 1) / total_files)
                     st.markdown("---")
         
+        progress_bar.progress(1.0, text="Analysis Complete!")
         st.success("Analysis complete for all resumes!")
 
-
-# --- History Page Logic ---
+# --- History Page ---
 def history_page():
     st.title("📄 Analysis History")
     
     conn = sqlite3.connect('resume_analysis.db')
     try:
-        df = pd.read_sql_query("SELECT * FROM analysis_results ORDER BY id DESC", conn)
+        df = pd.read_sql_query("SELECT id, resume_filename, relevance_score, verdict FROM analysis_results ORDER BY id DESC", conn)
     except pd.io.sql.DatabaseError:
         st.warning("No analysis history found.")
-        df = pd.DataFrame() # Create empty dataframe
+        df = pd.DataFrame()
     conn.close()
 
     if not df.empty:
-        # Filters
+        # --- Filters ---
         st.sidebar.subheader("Filter History")
-        jd_options = ["All"] + list(df['jd_text'].unique())
+        # To filter by JD, we need to load the full data first.
+        full_df = pd.read_sql_query("SELECT * FROM analysis_results", conn)
+        jd_options = ["All"] + list(full_df['jd_text'].unique())
         selected_jd = st.sidebar.selectbox("Filter by Job Description", options=jd_options)
+        
+        # Apply JD filter if selected
+        if selected_jd != "All":
+            df = pd.read_sql_query(f"SELECT id, resume_filename, relevance_score, verdict FROM analysis_results WHERE jd_text = ? ORDER BY id DESC", conn, params=(selected_jd,))
         
         verdict_options = ["All"] + list(df['verdict'].unique())
         selected_verdict = st.sidebar.selectbox("Filter by Verdict", options=verdict_options)
 
-        score_range = st.sidebar.slider(
-            "Filter by Score",
-            min_value=0,
-            max_value=100,
-            value=(0, 100)
-        )
-
-        # Apply filters
-        filtered_df = df.copy()
-        if selected_jd != "All":
-            filtered_df = filtered_df[filtered_df['jd_text'] == selected_jd]
-        if selected_verdict != "All":
-            filtered_df = filtered_df[filtered_df['verdict'] == selected_verdict]
+        score_range = st.sidebar.slider("Filter by Score", 0, 100, (0, 100))
         
-        filtered_df = filtered_df[
-            (filtered_df['relevance_score'] >= score_range[0]) &
-            (filtered_df['relevance_score'] <= score_range[1])
+        # Apply other filters
+        filtered_df = df[
+            (df['verdict'] == selected_verdict if selected_verdict != "All" else True) &
+            (df['relevance_score'] >= score_range[0]) &
+            (df['relevance_score'] <= score_range[1])
         ]
 
-        st.write(f"Displaying {len(filtered_df)} of {len(df)} total records.")
+        st.write(f"Displaying {len(filtered_df)} of {len(df)} records.")
+        
+        # --- Display Table Header ---
+        header_cols = st.columns([1, 4, 2, 2, 2])
+        header_cols[0].write("**ID**")
+        header_cols[1].write("**Filename**")
+        header_cols[2].write("**Score**")
+        header_cols[3].write("**Verdict**")
+        header_cols[4].write("**Actions**")
+        st.markdown("---")
 
-        # Display data
+        # --- Display Table Rows ---
         for index, row in filtered_df.iterrows():
-            with st.expander(f"**{row['resume_filename']}** | Score: {row['relevance_score']}% | Verdict: {row['verdict']}"):
-                st.text_area("Job Description", value=row['jd_text'], height=150, disabled=True, key=f"jd_{row['id']}")
-                st.write(f"**Missing Skills:** {row['missing_skills']}")
-                st.info(f"**Candidate Feedback:** {row['candidate_feedback']}")
-                
-                # Delete button
-                if st.button("Delete Record", key=f"delete_{row['id']}"):
-                    conn = sqlite3.connect('resume_analysis.db')
-                    c = conn.cursor()
-                    c.execute("DELETE FROM analysis_results WHERE id = ?", (row['id'],))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"Deleted record for {row['resume_filename']}.")
-                    st.rerun() # Refresh the page to show updated list
+            row_cols = st.columns([1, 4, 2, 2, 2])
+            row_cols[0].write(str(row['id']))
+            row_cols[1].write(row['resume_filename'])
+            row_cols[2].write(f"{row['relevance_score']}%")
+            row_cols[3].write(row['verdict'])
+            
+            # Action buttons
+            if row_cols[4].button("View Details", key=f"details_{row['id']}"):
+                st.session_state.selected_record_id = row['id']
+            if row_cols[4].button("Delete", key=f"delete_{row['id']}"):
+                conn = sqlite3.connect('resume_analysis.db')
+                c = conn.cursor()
+                c.execute("DELETE FROM analysis_results WHERE id = ?", (row['id'],))
+                conn.commit()
+                conn.close()
+                st.success(f"Deleted record {row['id']}.")
+                st.rerun()
+            
+            st.markdown("---")
+
     else:
         st.info("No analysis has been performed yet. Go to 'Analyze Resumes' to get started.")
 
+    # --- "Modal" for Viewing Details ---
+    if st.session_state.selected_record_id is not None:
+        conn = sqlite3.connect('resume_analysis.db')
+        record = pd.read_sql_query("SELECT * FROM analysis_results WHERE id = ?", conn, params=(st.session_state.selected_record_id,)).iloc[0]
+        conn.close()
+
+        with st.container(border=True):
+            st.subheader(f"Details for {record['resume_filename']} (ID: {record['id']})")
+            st.text_area("Job Description", value=record['jd_text'], height=150, disabled=True, key=f"jd_modal_{record['id']}")
+            st.write(f"**Missing Skills:** {record['missing_skills']}")
+            st.info(f"**Candidate Feedback:** {record['candidate_feedback']}")
+            if st.button("Close Details"):
+                st.session_state.selected_record_id = None
+                st.rerun()
 
 # --- Page Routing ---
 if page == "Analyze Resumes":
     main_app()
 else:
     history_page()
-
