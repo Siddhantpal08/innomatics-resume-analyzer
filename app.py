@@ -418,7 +418,10 @@ with analysis_tab:
     with clear_col1:
         if st.button("Clear Inputs"):
             # Reset JD text and bump uploader key to clear files
-            st.session_state['jd_text_key'] = ""
+            if "jd_text" in st.session_state:
+                st.session_state.jd_text = ""
+            if "uploaded_files_key" in st.session_state:
+                st.session_state.uploaded_files_key += 1
             st.session_state['uploader_version'] += 1
             st.experimental_rerun()
     with clear_col2:
