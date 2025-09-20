@@ -215,44 +215,19 @@ if 'file_uploader_key' not in st.session_state:
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
 
-# --- THEME SWITCHING LOGIC ---
-# This CSS sets up the variables for both themes.
-# The JS below will toggle the `data-theme` attribute on the HTML tag.
-st.markdown("""
-<style>
-    /* Light Theme (Default) */
-    :root {
-        --bg-color: #FFFFFF;
-        --secondary-bg-color: #F0F2F6;
-        --text-color: #31333F;
-        --secondary-text-color: #5A5A64;
-    }
-    /* Dark Theme */
-    html[data-theme="dark"] {
-        --bg-color: #0E1117;
-        --secondary-bg-color: #262730;
-        --text-color: #FAFAFA;
-        --secondary-text-color: #B9B9C3;
-    }
-    /* Logo inversion for Dark Mode */
-    html[data-theme="dark"] .innomatics-logo img {
-        filter: invert(1) hue-rotate(180deg);
-    }
-    /* Apply theme colors */
-    .stApp {
-        background-color: var(--bg-color);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# This JS runs on every rerun to apply the theme based on session_state
-st.components.v1.html(f"""
-<script>
-    const streamlitDoc = parent.document;
-    const theme = {'true' if st.session_state.dark_mode else 'false'} ? 'dark' : 'light';
-    streamlitDoc.documentElement.setAttribute('data-theme', theme);
-</script>
-""", height=0)
+# This CSS is injected conditionally based on the session state.
+# It's a reliable server-side method for theming.
+if st.session_state.dark_mode:
+    st.markdown("""
+    <style>
+        .stApp {
+            background-color: #0E1117;
+        }
+        .innomatics-logo img {
+            filter: invert(1) hue-rotate(180deg);
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- Header ---
 title_col, button_col = st.columns([3, 1])
@@ -271,10 +246,12 @@ with button_col:
             st.session_state.file_uploader_key = str(datetime.now().timestamp())
             st.rerun()
     with sub_col2:
+        # The toggle now simply sets the state, and the rerun applies the correct CSS
         if st.toggle("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle"):
             st.session_state.dark_mode = True
         else:
             st.session_state.dark_mode = False
+
 
 # --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
