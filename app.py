@@ -24,8 +24,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- Global Configurations ---
 DB_FILE = "analysis_results.db"
-LOGO_URL_LIGHT = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
-LOGO_URL_DARK = "https://www.innomatics.in/wp-content/uploads/2022/12/logo-1.png"
+LOGO_URL = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
 SKILL_KEYWORDS = [
     'Python', 'Java', 'C++', 'JavaScript', 'Go', 'Ruby', 'PHP', 'Django', 'Flask', 'Spring Boot', 'Node.js', 
     'React', 'Angular', 'Vue.js', 'SQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Cassandra', 
@@ -164,8 +163,33 @@ def get_llm_analysis(jd_text, resume_text):
     parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
     
     prompt_template = """
-    You are a world-class Senior Technical Recruiter with 20 years of experience...
-    [Prompt content is the same as before, omitted for brevity]
+    You are a world-class Senior Technical Recruiter with 20 years of experience, known for your meticulous, evidence-based analysis. Your task is to provide a rigorous evaluation of a resume against a job description. Your reputation depends on your precision and honesty.
+
+    **CONTEXT:**
+    1.  **Job Description (JD):**
+        ```
+        {jd}
+        ```
+    2.  **Candidate's Resume Content:**
+        ```
+        {resume}
+        ```
+
+    **YOUR TASK (Follow these steps precisely):**
+
+    1.  **Identify Core Requirements:** Scrutinize the JD and list the 5-7 most critical, non-negotiable hard skills, technologies, and experience qualifications (e.g., "5+ years of experience in Python", "experience with AWS S3 and EC2", "CI/CD pipeline management"). These are your primary evaluation criteria.
+    
+    2.  **Evidence-Based Skill Gap Analysis:** For each core requirement identified in Step 1, you must perform a forensic scan of the **entire Resume Content**. Find direct evidence. If a skill is mentioned, note it. If it is described with project experience, note that as a stronger match. If it is completely absent, you MUST list it as a missing skill. Do not make assumptions or infer skills that aren't explicitly stated.
+    
+    3.  **Calculate Relevance Score (0-100):** Based *only* on your evidence-based analysis, provide a score.
+        - **High Suitability (75-100):** The candidate's resume provides strong, explicit evidence for almost all ( > 80%) of the core requirements. The experience described is directly relevant.
+        - **Medium Suitability (45-74):** The resume shows evidence for some core requirements (40-70%), but is missing others, or the experience lacks depth and specific examples. The candidate is plausible but not a perfect match.
+        - **Low Suitability (<45):** The resume is missing a majority of the core requirements. The candidate is a clear mismatch for this specific role.
+
+    4.  **Write Professional Feedback:** Create a professional, constructive feedback paragraph for the candidate. Begin by acknowledging a specific, tangible strength from their resume. Then, clearly and directly state the 2-3 most critical missing skills you identified, explaining why they are important for this type of role. This feedback should be actionable and helpful.
+
+    **OUTPUT FORMAT:**
+    You MUST format your entire response as a single, valid JSON object that adheres to the following structure. Do not add any text, explanations, or markdown before or after the JSON object.
     {format_instructions}
     """
     
@@ -184,58 +208,34 @@ def get_llm_analysis(jd_text, resume_text):
 # --- Main App UI & Logic ---
 
 # Session state initialization
-if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False
 if 'file_uploader_key' not in st.session_state:
     st.session_state.file_uploader_key = str(datetime.now().timestamp())
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
 
-# --- THEME SWITCHING LOGIC ---
-# This CSS is injected to set the theme based on session state. It's a reliable method.
-if st.session_state.dark_mode:
-    st.markdown("""
-    <style>
-        .stApp {
-            background-color: #0E1117;
-            color: #FAFAFA;
-        }
-        .st-emotion-cache-183lzff { /* container border */
-            border-color: #31333F;
-        }
-        .st-emotion-cache-1r6slb0, .st-emotion-cache-1d3w5bk { /* text area and text input */
-            background-color: #262730;
-        }
-        h1, h2, h3, h4, h5, h6 {
-            color: #FAFAFA;
-        }
-        .innomatics-logo img {
-            filter: invert(1) hue-rotate(180deg);
-        }
-    </style>
-    """, unsafe_allow_html=True)
+# CSS to make the logo compatible with Streamlit's native dark mode
+st.markdown("""
+<style>
+    /* Invert logo in dark mode */
+    body[data-theme="dark"] .stImage > img {
+        filter: invert(1);
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- Header ---
-title_col, button_col = st.columns([3, 1])
+title_col, button_col = st.columns([4, 1])
 with title_col:
-    st.markdown('<div class="innomatics-logo">', unsafe_allow_html=True)
     st.image(LOGO_URL, width=250)
-    st.markdown('</div>', unsafe_allow_html=True)
     st.title("Placement Team Dashboard")
 
 with button_col:
     st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True)
-    sub_col1, sub_col2 = st.columns(2)
-    with sub_col1:
-        if st.button("🧹 Clear", key="clear_button"):
-            st.session_state.jd_text_key = ""
-            st.session_state.file_uploader_key = str(datetime.now().timestamp())
-            st.rerun()
-    with sub_col2:
-        toggle_label = "☀️ Light Mode" if st.session_state.dark_mode else "🌙 Dark Mode"
-        if st.button(toggle_label, key="dark_mode_toggle"):
-            st.session_state.dark_mode = not st.session_state.dark_mode
-            st.rerun()
+    if st.button("🧹 Clear Session", key="clear_button", use_container_width=True):
+        st.session_state.jd_text_key = ""
+        st.session_state.file_uploader_key = str(datetime.now().timestamp())
+        st.rerun()
 
 # --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
@@ -369,4 +369,3 @@ with dashboard_tab:
 
 st.markdown("---")
 st.markdown("Developed by **Siddhant Pal** for the Code4EdTech Challenge by Innomatics Research Labs.")
-
