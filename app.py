@@ -125,9 +125,9 @@ def delete_analysis_from_db(record_id):
     
 # --- UI Helper Functions ---
 def style_verdict(verdict):
-    if verdict == 'High Suitability': return f'**<span style="color: #28a745;">{verdict}</span>**'
-    elif verdict == 'Medium Suitability': return f'**<span style="color: #ffc107;">{verdict}</span>**'
-    else: return f'**<span style="color: #dc3545;">{verdict}</span>**'
+    if verdict == 'High Suitability': return f'<span style="color: #28a745;">**{verdict}**</span>'
+    elif verdict == 'Medium Suitability': return f'<span style="color: #ffc107;">**{verdict}**</span>'
+    else: return f'<span style="color: #dc3545;">**{verdict}**</span>'
     
 # --- Core Logic Functions ---
 def get_file_text(uploaded_file):
@@ -182,9 +182,9 @@ def get_llm_analysis(jd_text, resume_text):
     2.  **Evidence-Based Analysis:** For each core requirement, find **direct evidence** in the resume's "Work Experience" or "Projects" sections. A skill simply listed in a "Skills" section is a weak match. A skill demonstrated in a project or professional role is a **strong match**.
     
     3.  **FAIR SCORING (0-100):**
-        - **High Suitability (80-100):** The candidate provides strong, demonstrated evidence for nearly all core requirements. Their experience is directly and obviously relevant.
-        - **Medium Suitability (50-79):** The candidate demonstrates some core skills but is missing others, or their experience is related but not a direct match. The candidate is plausible.
-        - **Low Suitability (<50):** The resume is missing the majority of core requirements or lacks any demonstrated experience for the listed skills.
+        - **High Suitability (70-100):** The candidate provides strong, demonstrated evidence for nearly all core requirements. Their experience is directly and obviously relevant.
+        - **Medium Suitability (40-69):** The candidate demonstrates some core skills but is missing others, or their experience is related but not a direct match. The candidate is plausible.
+        - **Low Suitability (<40):** The resume is missing the majority of core requirements or lacks any demonstrated experience for the listed skills.
 
     4.  **Actionable Feedback:**
         - Identify the 3-5 most critical missing skills or qualifications.
@@ -354,25 +354,25 @@ with dashboard_tab:
         if not final_df.empty:
             for index, row in final_df.iterrows():
                 with st.container(border=True):
-                    # Truncate missing skills for display in the expander title
-                    missing_skills_summary = row['missing_skills']
-                    if len(missing_skills_summary) > 40:
-                        missing_skills_summary = missing_skills_summary[:40] + "..."
-
-                    expander_title = f"**{row['resume_filename']}** | Score: `{row['score']}%` | Verdict: **{row['verdict']}** | Gaps: *{missing_skills_summary}*"
-                    
-                    with st.expander(expander_title):
-                        button_col1, button_col2 = st.columns([1, 5])
+                    col1, col2, col3 = st.columns([5, 1, 1])
+                    with col1:
+                        st.markdown(f"**{row['resume_filename']}**")
                         
-                        with button_col1:
-                            if st.button("View Details", key=f"view_{row['id']}", use_container_width=True):
-                                show_report_modal(row['id'])
-
-                        with button_col2:
-                            if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
-                                delete_analysis_from_db(row['id'])
-                                st.success(f"Deleted record for {row['resume_filename']}.")
-                                st.rerun()
+                        verdict_html = style_verdict(row['verdict'])
+                        missing_skills_summary = row['missing_skills']
+                        if len(missing_skills_summary) > 45:
+                            missing_skills_summary = missing_skills_summary[:45] + "..."
+                        
+                        st.markdown(f"Score: `{row['score']}%` | Verdict: {verdict_html} | Gaps: *{missing_skills_summary}*", unsafe_allow_html=True)
+                    
+                    with col2:
+                        if st.button("Details", key=f"view_{row['id']}", use_container_width=True):
+                            show_report_modal(row['id'])
+                    with col3:
+                        if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
+                            delete_analysis_from_db(row['id'])
+                            st.success(f"Deleted record for {row['resume_filename']}.")
+                            st.rerun()
         else:
             st.info("No records match the current filter criteria.")
 
