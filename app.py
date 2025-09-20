@@ -52,7 +52,7 @@ def get_db_connection():
     return conn
 
 def init_database():
-    """Initializes the database table."""
+    """Initializes the database table, adding the missing_skills column if it doesn't exist."""
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
@@ -63,11 +63,16 @@ def init_database():
             jd_summary TEXT NOT NULL,
             score INTEGER NOT NULL,
             verdict TEXT NOT NULL,
-            missing_skills TEXT,
             feedback TEXT,
             full_jd TEXT
         )
     ''')
+    # Check if 'missing_skills' column exists and add it if it doesn't
+    c.execute("PRAGMA table_info(results)")
+    columns = [info[1] for info in c.fetchall()]
+    if 'missing_skills' not in columns:
+        c.execute("ALTER TABLE results ADD COLUMN missing_skills TEXT")
+
     conn.commit()
 
 init_database()
@@ -96,7 +101,7 @@ def load_data_for_dashboard():
     """Loads all analysis results into a Pandas DataFrame."""
     conn = get_db_connection()
     try:
-        df = pd.read_sql_query("SELECT id, timestamp, resume_filename, jd_summary, score, verdict FROM results ORDER BY id DESC", conn)
+        df = pd.read_sql_query("SELECT id, timestamp, resume_filename, jd_summary, score, verdict, missing_skills FROM results ORDER BY id DESC", conn)
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
         return df
@@ -119,9 +124,13 @@ def style_verdict(verdict):
 
 def highlight_verdict(row):
     verdict = row['verdict']
-    if verdict == 'High Suitability': return ['background-color: #d4edda; color: #155724;'] * len(row)
-    elif verdict == 'Medium Suitability': return ['background-color: #fff3cd; color: #856404;'] * len(row)
-    else: return ['background-color: #f8d7da; color: #721c24;'] * len(row)
+    color_map = {
+        'High Suitability': 'background-color: #d4edda; color: #155724;',
+        'Medium Suitability': 'background-color: #fff3cd; color: #856404;',
+        'Low Suitability': 'background-color: #f8d7da; color: #721c24;'
+    }
+    style = color_map.get(verdict, '')
+    return [style] * len(row)
     
 # --- Core Logic Functions ---
 def get_file_text(uploaded_file):
@@ -199,22 +208,66 @@ def get_llm_analysis(jd_text, resume_text):
 # --- Main App UI & Logic ---
 st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide")
 
-title_col, button_col = st.columns([4, 1])
-with title_col:
-    st.image("https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png", width=250)
-    st.title("Placement Team Dashboard")
-with button_col:
-    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True) # Vertical Spacer
-    if st.button("🧹 Clear & Reset Session", key="clear_button"):
-        st.session_state.jd_text_key = "" # Clear the text area
-        st.session_state.file_uploader_key = str(datetime.now().timestamp()) # Force re-render of file uploader
-        st.rerun()
+# --- Dark Mode CSS ---
+st.markdown("""
+<style>
+    body[data-theme="dark"] {
+        --background-color: #0E1117;
+        --secondary-background-color: #262730;
+        --primary-color: #FAFAFA;
+        --secondary-color: #B9B9C3;
+    }
+    body[data-theme="light"] {
+        --background-color: #FFFFFF;
+        --secondary-background-color: #F0F2F6;
+        --primary-color: #0E1117;
+        --secondary-color: #5A5A64;
+    }
+    .stApp {
+        background-color: var(--background-color);
+        color: var(--primary-color);
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--primary-color);
+    }
+    .st-emotion-cache-183lzff { /* container border */
+        border-color: var(--secondary-color);
+    }
+    .st-emotion-cache-1r6slb0, .st-emotion-cache-1d3w5bk { /* text area and text input */
+         background-color: var(--secondary-background-color);
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Use a key to manage the state of the file uploader for the reset button
+# Session state initialization
+if 'dark_mode' not in st.session_state:
+    st.session_state.dark_mode = False
 if 'file_uploader_key' not in st.session_state:
     st.session_state.file_uploader_key = 'initial'
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
+
+# Apply theme based on session state
+st.markdown(f'<body data-theme="{"dark" if st.session_state.dark_mode else "light"}"></body>', unsafe_allow_html=True)
+
+
+# --- Header ---
+title_col, button_col = st.columns([3, 1])
+with title_col:
+    st.image("https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png", width=250)
+    st.title("Placement Team Dashboard")
+
+with button_col:
+    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True) # Vertical Spacer
+    sub_col1, sub_col2 = st.columns(2)
+    with sub_col1:
+        if st.button("🧹 Clear", key="clear_button"):
+            st.session_state.jd_text_key = ""
+            st.session_state.file_uploader_key = str(datetime.now().timestamp())
+            st.rerun()
+    with sub_col2:
+        st.session_state.dark_mode = st.toggle("🌙 Dark", value=st.session_state.dark_mode, key="dark_mode_toggle")
+
 
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
@@ -302,7 +355,7 @@ with dashboard_tab:
         
         if not final_df.empty:
             st.dataframe(
-                final_df[['id', 'timestamp', 'resume_filename', 'jd_summary', 'score', 'verdict']].style.apply(highlight_verdict, axis=1),
+                final_df[['id', 'timestamp', 'resume_filename', 'jd_summary', 'score', 'verdict', 'missing_skills']].style.apply(highlight_verdict, axis=1),
                 hide_index=True,
                 use_container_width=True
             )
