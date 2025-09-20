@@ -10,3 +10,6 @@ lxml
 rapidfuzz
 scikit-learn
 pdfplumber
+google-generativeai
+numpy
+requests
