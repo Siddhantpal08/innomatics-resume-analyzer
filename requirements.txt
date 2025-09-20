@@ -13,3 +13,4 @@ pdfplumber
 google-generativeai
 numpy
 requests
+spacy
