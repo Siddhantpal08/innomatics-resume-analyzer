@@ -7,3 +7,6 @@ PyPDF2
 python-docx
 python-dotenv
 lxml
+rapidfuzz
+scikit-learn
+pdfplumber
