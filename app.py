@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from PyPDF2 import PdfReader
 from docx import Document
-from typing import List, Optional
+from typing import List
 
 # --- Core AI Libraries & Pydantic ---
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -28,9 +28,9 @@ LOGO_URL = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo
 
 # --- Pydantic Models for a more robust AI chain ---
 class JDSkills(BaseModel):
-    job_title: str = Field(description="The specific job title from the description (e.g., 'Senior Python Developer').")
-    hard_skills: List[str] = Field(description="A list of 5-7 critical technical skills, frameworks, or technologies.")
-    experience_years: Optional[str] = Field(description="The required years of experience (e.g., '3+ years', '5 years'). If not mentioned, this should be null.")
+    job_title: str = Field(description="The job title extracted from the description.")
+    hard_skills: List[str] = Field(description="A list of 5-7 critical technical skills or technologies.")
+    experience_years: str = Field(description="The required years of experience, if mentioned (e.g., '2+ years').")
 
 class ResumeSkills(BaseModel):
     demonstrated_skills: List[str] = Field(description="A list of skills the candidate has explicitly used in a project or work experience.")
@@ -85,8 +85,7 @@ def add_analysis_to_db(filename, jd_title, jd_text, report: FinalAnalysis):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         datetime.now(), filename, jd_title, jd_summary, report.relevance_score,
-        report.verdict, ", ".join(report.missing_skills) if report.missing_skills else "N/A",
-        report.candidate_feedback, jd_text
+        report.verdict, ", ".join(report.missing_skills), report.candidate_feedback, jd_text
     ))
     conn.commit()
 
@@ -142,16 +141,24 @@ def get_file_text(uploaded_file):
 def get_llm_analysis(jd_text, resume_text):
     if not GOOGLE_API_KEY:
         st.error("Google API Key is not configured. Please set it in your secrets.")
-        return None, None
+        return None
         
     model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.0, google_api_key=GOOGLE_API_KEY)
 
-    # Step 1: Extract structured data from JD and Resume
+    # --- STEP 1: Extract structured data from JD and Resume ---
     jd_parser = PydanticOutputParser(pydantic_object=JDSkills)
     resume_parser = PydanticOutputParser(pydantic_object=ResumeSkills)
 
-    jd_prompt = PromptTemplate(template="Extract the key skills and job title from this job description.\n{format_instructions}\nJD:\n{jd}", input_variables=["jd"], partial_variables={"format_instructions": jd_parser.get_format_instructions()})
-    resume_prompt = PromptTemplate(template="Extract the key skills from this resume, separating skills listed in a skills section from those demonstrated in work experience.\n{format_instructions}\nResume:\n{resume}", input_variables=["resume"], partial_variables={"format_instructions": resume_parser.get_format_instructions()})
+    jd_prompt = PromptTemplate(
+        template="Extract the key skills from this job description.\n{format_instructions}\nJD:\n{jd}",
+        input_variables=["jd"],
+        partial_variables={"format_instructions": jd_parser.get_format_instructions()}
+    )
+    resume_prompt = PromptTemplate(
+        template="Extract the key skills from this resume, separating skills listed in a skills section from those demonstrated in work experience.\n{format_instructions}\nResume:\n{resume}",
+        input_variables=["resume"],
+        partial_variables={"format_instructions": resume_parser.get_format_instructions()}
+    )
 
     jd_chain = jd_prompt | model | jd_parser
     resume_chain = resume_prompt | model | resume_parser
@@ -159,51 +166,55 @@ def get_llm_analysis(jd_text, resume_text):
     jd_skills = jd_chain.invoke({"jd": jd_text})
     resume_skills = resume_chain.invoke({"resume": resume_text})
 
-    # Step 2: Analyze the structured data
+    # --- STEP 2: Analyze the structured data ---
     analysis_parser = PydanticOutputParser(pydantic_object=FinalAnalysis)
     analysis_prompt_template = """
-    You are a fair and highly experienced Senior Technical Recruiter. Your task is to provide an accurate relevance score by comparing the structured data from a Job Description and a Resume.
+    You are a fair and experienced Senior Technical Recruiter. Your task is to analyze the structured data from a Job Description and a Resume to provide an accurate relevance score and feedback.
 
     **JOB REQUIREMENTS:**
     - Job Title: {job_title}
     - Critical Skills: {jd_hard_skills}
-    - Required Experience: {jd_experience}
+    - Experience: {jd_experience}
 
     **CANDIDATE'S SKILLS:**
     - Skills Demonstrated in Work/Projects: {resume_demonstrated}
-    - Skills Simply Listed in a List: {resume_listed}
+    - Skills Simply Listed: {resume_listed}
 
     **EVALUATION TASKS:**
-    1.  **SCORE (0-100):** Calculate a score based on how well the candidate's skills match the critical skills.
-        - Start with a base score of 0.
-        - For each skill in 'Critical Skills' that is also in 'Demonstrated Skills', add 15 points. This is a strong match.
-        - For each skill in 'Critical Skills' that is only in 'Listed Skills', add 5 points. This is a weak match.
-        - If 'Required Experience' is mentioned and the resume seems to align, add 10 bonus points.
-        - Cap the total score at 100.
+
+    1.  **SCORE:** Based on the overlap between 'Critical Skills' and the candidate's skills, provide a score from 0-100.
+        - Give high weight (80-90%) to skills in the 'Demonstrated' list.
+        - Give moderate weight (10-20%) to skills in the 'Listed' list.
+        - If the required experience matches, add bonus points.
 
     2.  **VERDICT:** Based on the score, provide a verdict:
-        - **High Suitability (70-100)**
-        - **Medium Suitability (40-69)**
-        - **Low Suitability (<40)**
+        - **High Suitability (70-100):** A strong match.
+        - **Medium Suitability (40-69):** A plausible match with some gaps.
+        - **Low Suitability (<40):** Not a suitable match.
         
-    3.  **MISSING SKILLS:** List the top 3-5 skills from 'Critical Skills' that are absent from BOTH of the candidate's skill lists.
+    3.  **MISSING SKILLS:** List the top 3-5 skills from 'Critical Skills' that are absent from both of the candidate's skill lists.
 
-    4.  **FEEDBACK:** Write a brief, constructive paragraph. Start with a positive point and then mention the key missing skills.
+    4.  **FEEDBACK:** Write a brief, constructive paragraph for the candidate. Start with a positive point and then mention the key missing skills.
 
     Provide your final analysis in the required JSON format.
     {format_instructions}
     """
-    analysis_prompt = PromptTemplate(template=analysis_prompt_template, input_variables=["job_title", "jd_hard_skills", "jd_experience", "resume_demonstrated", "resume_listed"], partial_variables={"format_instructions": analysis_parser.get_format_instructions()})
+    analysis_prompt = PromptTemplate(
+        template=analysis_prompt_template,
+        input_variables=["job_title", "jd_hard_skills", "jd_experience", "resume_demonstrated", "resume_listed"],
+        partial_variables={"format_instructions": analysis_parser.get_format_instructions()}
+    )
     analysis_chain = analysis_prompt | model | analysis_parser
     
     final_report = analysis_chain.invoke({
         "job_title": jd_skills.job_title,
         "jd_hard_skills": jd_skills.hard_skills,
-        "jd_experience": jd_skills.experience_years or "Not Specified",
+        "jd_experience": jd_skills.experience_years,
         "resume_demonstrated": resume_skills.demonstrated_skills,
         "resume_listed": resume_skills.listed_skills
     })
     
+    # Return the final report along with the extracted job title
     return final_report, jd_skills.job_title
 
 # --- Main App UI & Logic ---
@@ -238,7 +249,13 @@ with analysis_tab:
         col1, col2 = st.columns([2, 1])
         with col1:
             st.subheader("📋 Job Description")
-            jd_text = st.text_area("Paste the Job Description text here:", height=300, key="jd_text_key", label_visibility="collapsed", placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL. Experience with AWS is a plus...'")
+            jd_text = st.text_area(
+                "Paste the Job Description text here:", 
+                height=300, 
+                key="jd_text_key", 
+                label_visibility="collapsed",
+                placeholder="e.g., 'Seeking a Python developer with 3+ years of experience in Django, REST APIs, and PostgreSQL. Experience with AWS is a plus...'"
+            )
         with col2:
             st.subheader("📄 Candidate Resumes")
             uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key="file_uploader_key", label_visibility="collapsed")
@@ -337,8 +354,7 @@ with dashboard_tab:
         final_df = df_filtered[df_filtered['score'] >= min_score].reset_index(drop=True)
         
         st.subheader(f"Displaying {len(final_df)} Results")
-        st.write("")
-
+        
         if not final_df.empty:
             for index, row in final_df.iterrows():
                 with st.container(border=True):
@@ -354,11 +370,9 @@ with dashboard_tab:
                         st.markdown(f"Score: `{row['score']}%` | Verdict: <span style='color:{verdict_color};'>**{row['verdict']}**</span> | Gaps: *{missing_skills_summary}*", unsafe_allow_html=True)
                     
                     with col2:
-                        st.write("") 
                         if st.button("Details", key=f"view_{row['id']}", use_container_width=True):
                             show_report_modal(row['id'])
                     with col3:
-                        st.write("")
                         if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
                             delete_analysis_from_db(row['id'])
                             st.success(f"Deleted record for {row['resume_filename']}.")
