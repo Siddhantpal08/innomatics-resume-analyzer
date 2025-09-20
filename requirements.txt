@@ -2,11 +2,8 @@ streamlit
 pandas
 langchain
 langchain-google-genai
-langchain-huggingface
-chromadb
-pydantic
+pydantic>=2.0
 PyPDF2
 python-docx
-sentence-transformers
-torch
 python-dotenv
+lxml
