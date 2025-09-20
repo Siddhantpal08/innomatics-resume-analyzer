@@ -1,3 +1,4 @@
+**Job Title: Python Full-Stack Developer**
 import streamlit as st
 import os
 import sqlite3
@@ -124,10 +125,10 @@ def delete_analysis_from_db(record_id):
     conn.commit()
     
 # --- UI Helper Functions ---
-def style_verdict(verdict):
-    if verdict == 'High Suitability': return f'<span style="color: #28a745;">**{verdict}**</span>'
-    elif verdict == 'Medium Suitability': return f'<span style="color: #ffc107;">**{verdict}**</span>'
-    else: return f'<span style="color: #dc3545;">**{verdict}**</span>'
+def get_verdict_color(verdict):
+    if verdict == 'High Suitability': return '#28a745'
+    elif verdict == 'Medium Suitability': return '#ffc107'
+    else: return '#dc3545'
     
 # --- Core Logic Functions ---
 def get_file_text(uploaded_file):
@@ -219,7 +220,7 @@ if 'jd_text_key' not in st.session_state:
 st.markdown("""
 <style>
     /* Invert logo in dark mode */
-    body[data-theme="dark"] [data-testid="stImage"] > img {
+    [data-testid="stAppViewContainer"] [data-testid="stImage"] > img {
         filter: invert(1);
     }
 </style>
@@ -285,7 +286,7 @@ with analysis_tab:
                                 
                                 res_col1, res_col2 = st.columns([1, 3])
                                 with res_col1:
-                                    st.markdown(style_verdict(final_report.verdict), unsafe_allow_html=True)
+                                    st.markdown(f"<p style='color:{get_verdict_color(final_report.verdict)};'><strong>{final_report.verdict}</strong></p>", unsafe_allow_html=True)
                                     st.metric("Score", f"{final_report.relevance_score}%")
                                 with res_col2:
                                     st.warning("**Identified Gaps:**")
@@ -306,7 +307,7 @@ def show_report_modal(record_id):
     if record:
         st.subheader(f"Analysis for: {record['resume_filename']}")
         st.metric("Relevance Score", f"{record['score']}%")
-        st.markdown(f"**Verdict:** {record['verdict']}")
+        st.markdown(f"<p style='color:{get_verdict_color(record['verdict'])};'><strong>Verdict: {record['verdict']}</strong></p>", unsafe_allow_html=True)
         
         st.markdown("---")
         st.subheader("Identified Gaps")
@@ -358,12 +359,12 @@ with dashboard_tab:
                     with col1:
                         st.markdown(f"**{row['resume_filename']}**")
                         
-                        verdict_html = style_verdict(row['verdict'])
+                        verdict_color = get_verdict_color(row['verdict'])
                         missing_skills_summary = row['missing_skills']
                         if len(missing_skills_summary) > 45:
                             missing_skills_summary = missing_skills_summary[:45] + "..."
                         
-                        st.markdown(f"Score: `{row['score']}%` | Verdict: {verdict_html} | Gaps: *{missing_skills_summary}*", unsafe_allow_html=True)
+                        st.markdown(f"Score: `{row['score']}%` | Verdict: <span style='color:{verdict_color};'>**{row['verdict']}**</span> | Gaps: *{missing_skills_summary}*", unsafe_allow_html=True)
                     
                     with col2:
                         if st.button("Details", key=f"view_{row['id']}", use_container_width=True):
@@ -378,3 +379,25 @@ with dashboard_tab:
 
 st.markdown("---")
 st.markdown("Developed by **Siddhant Pal** for the Code4EdTech Challenge by Innomatics Research Labs.")
+**Company:** Innovatech Pune
+**Location:** Pune, India
+
+**About Us:**
+Innovatech is a dynamic startup creating cutting-edge web solutions. We value an Agile approach and are looking for a skilled developer to contribute to our core products.
+
+**Role Summary:**
+We are looking for a Full-Stack Developer with 2+ years of experience to join our team. You will be responsible for developing both client-side and server-side components of our applications, ensuring high performance and responsiveness.
+
+**Key Responsibilities:**
+- Develop and maintain scalable client-side applications using **React** and **Node.js**.
+- Build and consume robust REST APIs using **Python** and the **Flask** framework.
+- Manage and query application data effectively using **MongoDB** and **MySQL**.
+- Utilize **Git** for version control in a collaborative, Agile team.
+- Write and maintain unit tests for backend services to ensure code quality.
+
+**Required Skills and Experience:**
+- Proven experience with **Python** (Flask) and **JavaScript** (React, Node.js).
+- Strong knowledge of database systems, specifically **MongoDB** and **MySQL**, including writing SQL queries.
+- Proficient with **Git** for version control.
+- Experience working in an **Agile** development environment.
+- A background in assisting with UI component development and writing unit tests is highly desirable.
