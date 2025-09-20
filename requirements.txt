@@ -2,7 +2,9 @@ streamlit
 pandas
 langchain
 langchain-google-genai
-pydantic==1.10.13
+langchain-community
+langchain-huggingface
+pydantic>=2.0
 PyPDF2
 python-docx
 python-dotenv
