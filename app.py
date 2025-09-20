@@ -30,6 +30,9 @@ SKILL_KEYWORDS = [
     'Matplotlib', 'Seaborn', 'Tableau', 'Power BI', 'Natural Language Processing', 'NLP', 
     'API', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Big Data', 'Hadoop', 'Spark'
 ]
+LOGO_URL_LIGHT = "https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png"
+LOGO_URL_DARK = "https://www.innomatics.in/wp-content/uploads/2022/12/logo-1.png" # A white version of the logo
+
 
 # --- Pydantic Model for Structured LLM Output ---
 class FinalAnalysis(BaseModel):
@@ -49,6 +52,7 @@ class FinalAnalysis(BaseModel):
 def get_db_connection():
     """Creates a cached, singleton connection to the SQLite database."""
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.row_factory = sqlite3.Row # Allows accessing columns by name
     return conn
 
 def init_database():
@@ -109,6 +113,14 @@ def load_data_for_dashboard():
         st.error(f"Error loading dashboard data: {e}")
         return pd.DataFrame()
 
+def get_single_record(record_id):
+    """Retrieves a single, complete record from the database by its ID."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM results WHERE id = ?", (record_id,))
+    return c.fetchone()
+
+
 def delete_analysis_from_db(record_id):
     """Deletes a specific analysis record by its ID."""
     conn = get_db_connection()
@@ -121,16 +133,6 @@ def style_verdict(verdict):
     if verdict == 'High Suitability': return f'**<span style="color: #28a745;">{verdict}</span>**'
     elif verdict == 'Medium Suitability': return f'**<span style="color: #ffc107;">{verdict}</span>**'
     else: return f'**<span style="color: #dc3545;">{verdict}</span>**'
-
-def highlight_verdict(row):
-    verdict = row['verdict']
-    color_map = {
-        'High Suitability': 'background-color: #d4edda; color: #155724;',
-        'Medium Suitability': 'background-color: #fff3cd; color: #856404;',
-        'Low Suitability': 'background-color: #f8d7da; color: #721c24;'
-    }
-    style = color_map.get(verdict, '')
-    return [style] * len(row)
     
 # --- Core Logic Functions ---
 def get_file_text(uploaded_file):
@@ -206,10 +208,9 @@ def get_llm_analysis(jd_text, resume_text):
     })
 
 # --- Main App UI & Logic ---
-st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide")
+st.set_page_config(page_title="Innomatics Resume Analyzer", layout="wide", initial_sidebar_state="collapsed")
 
-# --- Dark Mode CSS & JS ---
-# Session state initialization must happen before widgets are created
+# Session state initialization
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 if 'file_uploader_key' not in st.session_state:
@@ -217,40 +218,15 @@ if 'file_uploader_key' not in st.session_state:
 if 'jd_text_key' not in st.session_state:
     st.session_state.jd_text_key = ''
 
-# JavaScript to toggle the theme attribute on the parent document's body
-theme_js = f"""
-<script>
-    function applyTheme(isDarkMode) {{
-        const parentBody = parent.document.body;
-        if (parentBody) {{
-            parentBody.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
-        }}
-    }}
-    applyTheme({str(st.session_state.dark_mode).lower()});
-</script>
-"""
-st.components.v1.html(theme_js, height=0)
-
-# CSS that uses the data-theme attribute and inverts the logo
-st.markdown("""
-<style>
-    body[data-theme="dark"] .innomatics-logo img {
-        filter: invert(1) hue-rotate(180deg);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
 # --- Header ---
 title_col, button_col = st.columns([3, 1])
 with title_col:
-    st.markdown('<div class="innomatics-logo">', unsafe_allow_html=True) # Class for CSS targeting
-    st.image("https://www.innomatics.in/wp-content/uploads/2023/01/Innomatics-Logo1.png", width=250)
-    st.markdown('</div>', unsafe_allow_html=True)
+    logo_url = LOGO_URL_DARK if st.session_state.dark_mode else LOGO_URL_LIGHT
+    st.image(logo_url, width=250)
     st.title("Placement Team Dashboard")
 
 with button_col:
-    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True) # Vertical Spacer
+    st.markdown("<div style='height: 2.5rem;'></div>", unsafe_allow_html=True)
     sub_col1, sub_col2 = st.columns(2)
     with sub_col1:
         if st.button("🧹 Clear", key="clear_button"):
@@ -258,10 +234,24 @@ with button_col:
             st.session_state.file_uploader_key = str(datetime.now().timestamp())
             st.rerun()
     with sub_col2:
-        # The on_change callback ensures the state is set before the script reruns
-        st.toggle("🌙 Dark", value=st.session_state.dark_mode, key="dark_mode_toggle")
+        # The on_change callback is the reliable way to handle state updates for the toggle
+        def theme_change():
+            st.session_state.dark_mode = not st.session_state.dark_mode
+
+        st.toggle("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle", on_change=theme_change)
 
 
+# Configure Streamlit's theme based on the session state.
+# This must be done after the toggle widget is created.
+if st.session_state.dark_mode:
+    st.config.set_option('theme.backgroundColor', '#0E1117')
+    st.config.set_option('theme.base', 'dark')
+else:
+    st.config.set_option('theme.backgroundColor', '#FFFFFF')
+    st.config.set_option('theme.base', 'light')
+
+
+# --- Main App Body ---
 analysis_tab, dashboard_tab = st.tabs(["📊 Analysis", "🗂️ Dashboard"])
 
 with analysis_tab:
@@ -280,7 +270,7 @@ with analysis_tab:
         with col2:
             st.subheader("📄 Candidate Resumes")
             uploaded_files = st.file_uploader("Upload resumes:", type=["pdf", "docx"], accept_multiple_files=True, key=st.session_state.file_uploader_key, label_visibility="collapsed")
-    st.write("") # Spacer
+    st.write("") 
 
     if st.button("🚀 Run Full Analysis", type="primary", key="analysis_button", use_container_width=True):
         if not jd_text.strip() or not uploaded_files:
@@ -353,31 +343,52 @@ with dashboard_tab:
         st.subheader(f"Displaying {len(final_df)} Results")
         
         if not final_df.empty:
-            st.dataframe(
-                final_df[['id', 'timestamp', 'resume_filename', 'jd_summary', 'score', 'verdict', 'missing_skills']].style.apply(highlight_verdict, axis=1),
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "id": st.column_config.NumberColumn("ID", width="small"),
-                    "timestamp": st.column_config.TextColumn("Time"),
-                    "resume_filename": st.column_config.TextColumn("Resume"),
-                    "jd_summary": st.column_config.TextColumn("JD"),
-                    "score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
-                    "verdict": st.column_config.TextColumn("Verdict"),
-                    "missing_skills": st.column_config.TextColumn("Missing Skills", width="large"),
-                }
-            )
-            
-            st.markdown("---")
-            st.subheader("Delete a Record")
-            delete_options = [f"ID {row['id']} - {row['resume_filename']} ({row['jd_summary']})" for _, row in final_df.iterrows()]
-            record_to_delete_display = st.selectbox("Select a record to delete:", options=[""] + delete_options)
-            
-            if st.button("❌ Delete Selected Record", type="secondary") and record_to_delete_display:
-                record_id_to_delete = int(record_to_delete_display.split(" - ")[0].replace("ID ", ""))
-                delete_analysis_from_db(record_id_to_delete)
-                st.success(f"Record ID {record_id_to_delete} has been deleted.")
-                st.rerun()
+            for index, row in final_df.iterrows():
+                # Define a modal for each row
+                modal_key = f"modal_{row['id']}"
+                if modal_key not in st.session_state:
+                    st.session_state[modal_key] = False
+
+                with st.container(border=True):
+                    row_col1, row_col2, row_col3 = st.columns([4, 1, 1])
+                    with row_col1:
+                        st.markdown(f"**{row['resume_filename']}**")
+                        st.markdown(f"Score: **{row['score']}%** | Verdict: **{row['verdict']}**")
+                    with row_col2:
+                        if st.button("View Details", key=f"view_{row['id']}", use_container_width=True):
+                            st.session_state[modal_key] = True
+                    with row_col3:
+                        if st.button("Delete", key=f"delete_{row['id']}", type="secondary", use_container_width=True):
+                            delete_analysis_from_db(row['id'])
+                            st.success(f"Deleted record for {row['resume_filename']}.")
+                            st.rerun()
+
+                # Modal display logic
+                if st.session_state[modal_key]:
+                    with st.container(): # Use a container to manage the modal
+                        with st.modal(title=f"Full Report for {row['resume_filename']}"):
+                            record = get_single_record(row['id'])
+                            if record:
+                                st.subheader("Analysis Summary")
+                                st.metric("Relevance Score", f"{record['score']}%")
+                                st.markdown(f"**Verdict:** {record['verdict']}")
+                                
+                                st.markdown("---")
+                                st.subheader("Identified Gaps")
+                                st.markdown(record['missing_skills'])
+
+                                st.markdown("---")
+                                st.subheader("Candidate Feedback")
+                                st.markdown(record['feedback'])
+                                
+                                st.markdown("---")
+                                st.subheader("Original Job Description")
+                                st.text_area("JD", value=record['full_jd'], height=200, disabled=True)
+                            
+                            if st.button("Close", key=f"close_{row['id']}"):
+                                st.session_state[modal_key] = False
+                                st.rerun()
+
         else:
             st.info("No records match the current filter criteria.")
 
